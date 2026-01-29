@@ -1,0 +1,35 @@
+# Data (never commit)
+data_raw/
+data_processed/
+dataset/
+
+# Experiment outputs
+runs/
+results/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Model checkpoints
+*.pt
+*.pth
+
