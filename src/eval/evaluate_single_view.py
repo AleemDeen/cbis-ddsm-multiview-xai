@@ -1,11 +1,12 @@
 import torch
 import pandas as pd
 import numpy as np
-from sklearn.metrics import (
-    roc_auc_score,
-    accuracy_score,
-    recall_score
-)
+import warnings
+import os
+from sklearn.metrics import roc_auc_score, accuracy_score, recall_score
+
+# Silence the specific UserWarnings from torchvision internally
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.models._utils")
 
 from src.models.resnet18_single_view import ResNet18SingleView
 from src.data.dataloaders import build_dataloaders
@@ -13,75 +14,80 @@ from src.data.dataloaders import build_dataloaders
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
+    print(f"Using device: {device}")
 
-    # -------------------------
-    # Load test data ONLY
-    # -------------------------
+    # Build Dataloader
     _, _, test_loader = build_dataloaders(
         csv_path="data_processed/indexed_full_mammogram_images_with_labels.csv",
         splits_dir="splits",
-        batch_size=4,
-        num_workers=0,
-        pin_memory=False,
+        batch_size=16,
+        num_workers=4,
+        pin_memory=True,
     )
 
-    # -------------------------
-    # Load trained model
-    # -------------------------
+    # Load Model
     model = ResNet18SingleView().to(device)
-    model.load_state_dict(
-        torch.load("resnet18_single_view_best.pt", map_location=device)
+
+    state_dict = torch.load(
+        "resnet18_single_view_best.pt",
+        map_location=device,
+        weights_only=True
     )
+    model.load_state_dict(state_dict)
     model.eval()
 
-    all_probs = []
-    all_labels = []
-    all_patient_ids = []
+    all_probs, all_labels = [], []
 
-    # -------------------------
-    # Inference
-    # -------------------------
+    print("Running Inference...")
     with torch.no_grad():
         for batch in test_loader:
             images = batch["image"].to(device)
-            labels = batch["label"].cpu().numpy()
-            patient_ids = batch["patient_id"]
+            labels = batch["label"].to(device)
 
             logits = model(images)
-            probs = torch.sigmoid(logits).cpu().numpy()
+            probs = torch.sigmoid(logits).view(-1).cpu().numpy()
 
-            all_probs.extend(probs)
-            all_labels.extend(labels)
-            all_patient_ids.extend(patient_ids)
+            all_probs.extend(probs.tolist())
+            all_labels.extend(labels.view(-1).cpu().numpy().tolist())
 
     all_probs = np.array(all_probs)
     all_labels = np.array(all_labels)
-    preds = (all_probs >= 0.5).astype(int)
 
-    # -------------------------
-    # Metrics
-    # -------------------------
     auc = roc_auc_score(all_labels, all_probs)
-    accuracy = accuracy_score(all_labels, preds)
-    sensitivity = recall_score(all_labels, preds)
-    specificity = recall_score(all_labels, preds, pos_label=0)
+    acc = accuracy_score(all_labels, all_probs >= 0.5)
+    rec = recall_score(all_labels, all_probs >= 0.5)
 
-    print("\nTEST SET RESULTS")
-    print(f"AUC:          {auc:.3f}")
-    print(f"Accuracy:     {accuracy:.3f}")
-    print(f"Sensitivity:  {sensitivity:.3f}")
-    print(f"Specificity:  {specificity:.3f}")
+    print(f"\n{'='*20} EVALUATION COMPLETE {'='*20}")
+    print(f"Test Samples: {len(all_labels)}")
+    print(f"AUC Score:    {auc:.4f}")
+    print(f"Accuracy:     {acc:.4f}")
+    print(f"Recall:       {rec:.4f}")
+    print(f"{'='*51}")
 
-    # -------------------------
+    # -----------------------------
+    # NEW: Save / update CSV files
+    # -----------------------------
+
+    os.makedirs("results", exist_ok=True)
+
+    # Save predictions
+    predictions_df = pd.DataFrame({
+        "true_label": all_labels,
+        "predicted_probability": all_probs,
+        "predicted_label": (all_probs >= 0.5).astype(int)
+    })
+
+    predictions_df.to_csv(
+        "results/single_view_test_predictions.csv",
+        index=False
+    )
+
     # Save metrics
-    # -------------------------
     metrics_df = pd.DataFrame([{
-        "model": "single_view_cc",
+        "num_test_samples": len(all_labels),
         "auc": auc,
-        "accuracy": accuracy,
-        "sensitivity": sensitivity,
-        "specificity": specificity
+        "accuracy": acc,
+        "recall": rec
     }])
 
     metrics_df.to_csv(
@@ -89,22 +95,9 @@ def main():
         index=False
     )
 
-    # -------------------------
-    # Save per-sample predictions
-    # -------------------------
-    preds_df = pd.DataFrame({
-        "patient_id": all_patient_ids,
-        "true_label": all_labels,
-        "predicted_prob": all_probs,
-        "predicted_label": preds
-    })
-
-    preds_df.to_csv(
-        "results/single_view_test_predictions.csv",
-        index=False
-    )
-
-    print("\nSaved results to results/")
+    print("Saved:")
+    print(" - results/single_view_test_predictions.csv")
+    print(" - results/single_view_test_metrics.csv")
 
 
 if __name__ == "__main__":

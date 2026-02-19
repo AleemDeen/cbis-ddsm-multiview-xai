@@ -1,62 +1,81 @@
 from pathlib import Path
 import pandas as pd
-import numpy as np
-from src.utils.config import load_config
-
-RANDOM_SEED = 42
-TRAIN_FRAC = 0.7
-VAL_FRAC = 0.15
-TEST_FRAC = 0.15
+from sklearn.model_selection import train_test_split
 
 
 def main():
-    np.random.seed(RANDOM_SEED)
+    CSV_PATH = Path("data_processed/indexed_full_mammogram_images_with_labels.csv")
+    SPLITS_DIR = Path("splits")
+    SPLITS_DIR.mkdir(exist_ok=True)
 
-    cfg = load_config()
+    SEED = 42
+    TRAIN_RATIO = 0.70
+    VAL_RATIO = 0.15
+    TEST_RATIO = 0.15
 
-    # IMPORTANT: use the LABELLED CSV
-    data_csv = Path(cfg["PROCESSED_DATA_DIR"]) / "indexed_full_mammogram_images_with_labels.csv"
+    assert abs(TRAIN_RATIO + VAL_RATIO + TEST_RATIO - 1.0) < 1e-6
 
-    splits_dir = Path("splits")
-    splits_dir.mkdir(exist_ok=True)
+    # ------------------------------
+    # Load CSV
+    # ------------------------------
+    df = pd.read_csv(CSV_PATH)
 
-    df = pd.read_csv(data_csv)
+    # Derive case_id (P_XXXXX)
+    df["case_id"] = df["patient_id"].str.extract(r"(P_\d+)")
 
-    # --------------------------------------------------
-    # FORCE patient-level IDs (P_XXXXX)
-    # --------------------------------------------------
-    df["patient_id"] = (
-        df["patient_id"]
-        .astype(str)
-        .str.extract(r"(P_\d+)")
+    # ------------------------------
+    # Derive ONE label per patient
+    # Malignant if ANY image is malignant
+    # ------------------------------
+    case_labels = (
+        df.groupby("case_id")["label"]
+        .max()
+        .reset_index()
     )
 
-    # --------------------------------------------------
-    # Patient-level splitting (NOT lesion-level)
-    # --------------------------------------------------
-    cases = df["patient_id"].unique()
-    np.random.shuffle(cases)
+    # ------------------------------
+    # Stratified split: train vs temp
+    # ------------------------------
+    train_cases, temp_cases = train_test_split(
+        case_labels,
+        test_size=(1.0 - TRAIN_RATIO),
+        stratify=case_labels["label"],
+        random_state=SEED,
+    )
 
-    n_total = len(cases)
-    n_train = int(TRAIN_FRAC * n_total)
-    n_val = int(VAL_FRAC * n_total)
+    # ------------------------------
+    # Stratified split: val vs test
+    # ------------------------------
+    val_size = VAL_RATIO / (VAL_RATIO + TEST_RATIO)
 
-    train_cases = cases[:n_train]
-    val_cases = cases[n_train:n_train + n_val]
-    test_cases = cases[n_train + n_val:]
+    val_cases, test_cases = train_test_split(
+        temp_cases,
+        test_size=(1.0 - val_size),
+        stratify=temp_cases["label"],
+        random_state=SEED,
+    )
 
-    # --------------------------------------------------
-    # Write split files
-    # --------------------------------------------------
-    (splits_dir / "train_cases.txt").write_text("\n".join(train_cases))
-    (splits_dir / "val_cases.txt").write_text("\n".join(val_cases))
-    (splits_dir / "test_cases.txt").write_text("\n".join(test_cases))
+    # ------------------------------
+    # Save split files
+    # ------------------------------
+    (SPLITS_DIR / "train_cases.txt").write_text(
+        "\n".join(sorted(train_cases["case_id"])) + "\n"
+    )
+    (SPLITS_DIR / "val_cases.txt").write_text(
+        "\n".join(sorted(val_cases["case_id"])) + "\n"
+    )
+    (SPLITS_DIR / "test_cases.txt").write_text(
+        "\n".join(sorted(test_cases["case_id"])) + "\n"
+    )
 
+    # ------------------------------
+    # Report split sizes
+    # ------------------------------
     print("Split sizes (patients):")
-    print("Train:", len(train_cases))
-    print("Val:", len(val_cases))
-    print("Test:", len(test_cases))
-    print("Total:", n_total)
+    print(f"Train: {len(train_cases)}")
+    print(f"Val:   {len(val_cases)}")
+    print(f"Test:  {len(test_cases)}")
+    print(f"Total: {len(case_labels)}")
 
 
 if __name__ == "__main__":

@@ -1,28 +1,22 @@
 import torch
 import torch.nn as nn
-from torchvision import models
-
+from torchvision.models import resnet18, ResNet18_Weights
 
 class ResNet18SingleView(nn.Module):
-    """
-    Single-view baseline model using ResNet-18 pretrained on ImageNet.
-    Input: (B, 1, 512, 512)
-    Output: (B, 1) logits
-    """
-
-    def __init__(self):
-        super().__init__()
-
-        self.backbone = models.resnet18(pretrained=True)
-
-        # Change first conv layer to accept 1-channel input
-        self.backbone.conv1 = nn.Conv2d(
-            1, 64, kernel_size=7, stride=2, padding=3, bias=False
+    def __init__(self, num_classes=1):
+        super(ResNet18SingleView, self).__init__()
+        # Use modern weights parameter to avoid warnings
+        self.model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+        
+        # Change the first layer to accept 1-channel (grayscale) mammograms
+        self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        
+        # Add Dropout before the final layer (0.3 is a good balance for medical imaging)
+        num_ftrs = self.model.fc.in_features
+        self.model.fc = nn.Sequential(
+            nn.Dropout(p=0.3),
+            nn.Linear(num_ftrs, num_classes)
         )
 
-        # Replace final FC layer for binary classification
-        in_features = self.backbone.fc.in_features
-        self.backbone.fc = nn.Linear(in_features, 1)
-
     def forward(self, x):
-        return self.backbone(x).squeeze(1)
+        return self.model(x)
