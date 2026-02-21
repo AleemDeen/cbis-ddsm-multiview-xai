@@ -18,5 +18,22 @@ class ResNet18SingleView(nn.Module):
             nn.Linear(num_ftrs, num_classes)
         )
 
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x, return_features=False):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        features = self.model.layer4(x)
+
+        pooled = self.model.avgpool(features)
+        pooled = torch.flatten(pooled, 1)
+        logits = self.model.fc(pooled)
+
+        if return_features:
+            return logits, features
+
+        return logits

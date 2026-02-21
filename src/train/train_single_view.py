@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import Adam
 from tqdm import tqdm
 import pandas as pd
@@ -9,12 +10,8 @@ import warnings
 from src.models.resnet18_single_view import ResNet18SingleView
 from src.data.dataloaders import build_dataloaders
 
-# Silence specific torchvision warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.models._utils")
 
-# --------------------------------------------------
-# Training / evaluation helpers
-# --------------------------------------------------
 
 def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
     model.train()
@@ -23,13 +20,42 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
     for batch in tqdm(loader, desc="Training", leave=False):
         images = batch["image"].to(device, non_blocking=True)
         labels = batch["label"].float().to(device, non_blocking=True)
+        roi_masks = batch["roi_mask"].to(device, non_blocking=True)  # preloaded in dataset
 
         optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
-            logits = model(images)
-            # FIX: Use .view(-1) to change shape from [64, 1] to [64] to match labels
-            loss = criterion(logits.view(-1), labels)
+            logits, features = model(images, return_features=True)
+
+            classification_loss = criterion(logits.view(-1), labels)
+
+            # feature → spatial activation
+            activation_map = features.mean(dim=1, keepdim=True)
+            activation_map = F.interpolate(
+                activation_map,
+                size=(512, 512),
+                mode="bilinear",
+                align_corners=False
+            )
+
+            # normalize activations
+            activation_map = torch.relu(activation_map)
+            max_vals = activation_map.amax(dim=(2, 3), keepdim=True) + 1e-8
+            activation_map = activation_map / max_vals
+
+            # malignant only
+            malignant_mask = (labels == 1)
+
+            if malignant_mask.any():
+                loc_loss = dice_loss(
+                    activation_map[malignant_mask],
+                    roi_masks[malignant_mask]
+                )
+            else:
+                loc_loss = torch.tensor(0.0, device=device)
+
+            lambda_loc = 0.1
+            loss = classification_loss + lambda_loc * loc_loss
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -51,7 +77,6 @@ def eval_one_epoch(model, loader, criterion, device):
 
             with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
                 logits = model(images)
-                # FIX: Use .view(-1) to change shape from [64, 1] to [64] to match labels
                 loss = criterion(logits.view(-1), labels)
 
             running_loss += loss.item()
@@ -59,9 +84,16 @@ def eval_one_epoch(model, loader, criterion, device):
     return running_loss / len(loader)
 
 
-# --------------------------------------------------
-# Main training script
-# --------------------------------------------------
+def dice_loss(pred, target, eps=1e-8):
+    pred = pred.view(pred.size(0), -1)
+    target = target.view(target.size(0), -1)
+
+    intersection = (pred * target).sum(dim=1)
+    union = pred.sum(dim=1) + target.sum(dim=1)
+
+    dice = (2 * intersection + eps) / (union + eps)
+    return 1 - dice.mean()
+
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,38 +105,35 @@ def main():
     train_loader, val_loader, _ = build_dataloaders(
         csv_path=CSV_PATH,
         splits_dir=SPLITS_DIR,
-        batch_size=64,           
-        num_workers=6,          
-        pin_memory=True,         
-        prefetch_factor=2,       
-        persistent_workers=True  
+        batch_size=64,
+        num_workers=6,
+        pin_memory=True,
+        prefetch_factor=2,
+        persistent_workers=True
     )
 
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
-    # Class Weighting
     df = pd.read_csv(CSV_PATH)
     num_pos = (df["label"] == 1).sum()
     num_neg = (df["label"] == 0).sum()
     pos_weight = torch.tensor([num_neg / num_pos], device=device)
 
-    # Model Initialization
     model = ResNet18SingleView().to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    
-    # Optimizer and Scheduler setup
-    optimizer = Adam(model.parameters(), lr=5e-5, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
 
-    # Modern GradScaler
+    optimizer = Adam(model.parameters(), lr=5e-5, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=2
+    )
+
     scaler = torch.amp.GradScaler('cuda', enabled=device.type == "cuda")
 
-    # Early Stopping & Timing parameters
     num_epochs = 50
-    patience = 10  # Room for the scheduler to work
+    patience = 10
     best_val_loss = float("inf")
     epochs_no_improve = 0
-    
+
     start_time = time.time()
 
     print(f"\nStarting Training (Patience: {patience} epochs)")
@@ -113,15 +142,12 @@ def main():
     for epoch in range(num_epochs):
         epoch_start = time.time()
 
-        # 1. Core training and validation
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, scaler, device)
         val_loss = eval_one_epoch(model, val_loader, criterion, device)
 
-        # 2. Update the scheduler with the new val_loss
         scheduler.step(val_loss)
         current_lr = optimizer.param_groups[0]['lr']
 
-        # Timing and status
         epoch_duration = time.time() - epoch_start
         total_elapsed = time.time() - start_time
 
@@ -129,7 +155,6 @@ def main():
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         print(f"Time: {epoch_duration:.2f}s (Total: {total_elapsed/60:.2f} min)")
 
-        # 3. Early Stopping and Saving Logic
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
@@ -142,11 +167,12 @@ def main():
         print("-" * 30)
 
         if epochs_no_improve >= patience:
-            print(f"\nEarly stopping triggered.")
+            print("\nEarly stopping triggered.")
             break
 
     total_time = time.time() - start_time
     print(f"Training Complete! Total Time: {total_time/60:.2f} minutes.")
+
 
 if __name__ == "__main__":
     main()
