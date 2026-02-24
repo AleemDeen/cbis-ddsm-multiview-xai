@@ -1,16 +1,13 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.optim import Adam
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import pandas as pd
 import time
-import warnings
 
-from src.models.resnet18_single_view import ResNet18SingleView
-from src.data.dataloaders import build_dataloaders
-
-warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.models._utils")
+from src.models.resnet18_multi_view import ResNet18MultiView
+from src.data.multi_view_dataset import CBISDDSMMultiViewDataset
 
 
 def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
@@ -18,40 +15,15 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
     running_loss = 0.0
 
     for batch in tqdm(loader, desc="Training", leave=False):
-        images = batch["image"].to(device, non_blocking=True)
+        cc = batch["cc_image"].to(device, non_blocking=True)
+        mlo = batch["mlo_image"].to(device, non_blocking=True)
         labels = batch["label"].float().to(device, non_blocking=True)
-        roi_masks = batch["roi_mask"].to(device, non_blocking=True)  # preloaded in dataset
 
         optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
-            logits, activation_map = model(images, return_attention=True)
-            classification_loss = criterion(logits.view(-1), labels)
-            activation_map = F.interpolate(
-                activation_map,
-                size=(512, 512),
-                mode="bilinear",
-                align_corners=False
-            )
-
-            # normalize activations
-            activation_map = torch.relu(activation_map)
-            max_vals = activation_map.amax(dim=(2, 3), keepdim=True) + 1e-8
-            activation_map = activation_map / max_vals
-
-            # malignant only
-            malignant_mask = (labels == 1)
-
-            if malignant_mask.any():
-                loc_loss = dice_loss(
-                    activation_map[malignant_mask],
-                    roi_masks[malignant_mask]
-                )
-            else:
-                loc_loss = torch.tensor(0.0, device=device)
-
-            lambda_loc = 0.1
-            loss = classification_loss + lambda_loc * loc_loss
+            logits = model(cc, mlo)
+            loss = criterion(logits.view(-1), labels)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -68,11 +40,12 @@ def eval_one_epoch(model, loader, criterion, device):
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Evaluating", leave=False):
-            images = batch["image"].to(device, non_blocking=True)
+            cc = batch["cc_image"].to(device, non_blocking=True)
+            mlo = batch["mlo_image"].to(device, non_blocking=True)
             labels = batch["label"].float().to(device, non_blocking=True)
 
             with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
-                logits = model(images)
+                logits = model(cc, mlo)
                 loss = criterion(logits.view(-1), labels)
 
             running_loss += loss.item()
@@ -80,44 +53,44 @@ def eval_one_epoch(model, loader, criterion, device):
     return running_loss / len(loader)
 
 
-def dice_loss(pred, target, eps=1e-8):
-    pred = pred.view(pred.size(0), -1)
-    target = target.view(target.size(0), -1)
-
-    intersection = (pred * target).sum(dim=1)
-    union = pred.sum(dim=1) + target.sum(dim=1)
-
-    dice = (2 * intersection + eps) / (union + eps)
-    return 1 - dice.mean()
-
-
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    CSV_PATH = "data_processed/indexed_full_mammogram_images_with_labels.csv"
-    SPLITS_DIR = "splits"
+    CSV_PATH = "data_processed/indexed_multi_view_cases.csv"
 
-    train_loader, val_loader, _ = build_dataloaders(
-        csv_path=CSV_PATH,
-        splits_dir=SPLITS_DIR,
-        batch_size=64,
-        num_workers=6,
+    full_df = pd.read_csv(CSV_PATH)
+
+    # 80/20 split
+    train_df = full_df.sample(frac=0.8, random_state=42)
+    val_df = full_df.drop(train_df.index)
+
+    train_dataset = CBISDDSMMultiViewDataset(train_df)
+    val_dataset = CBISDDSMMultiViewDataset(val_df)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=32,
+        shuffle=True,
+        num_workers=4,
         pin_memory=True,
-        prefetch_factor=2,
-        persistent_workers=True
     )
 
-    print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=32,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
 
-    df = pd.read_csv(CSV_PATH)
-    num_pos = (df["label"] == 1).sum()
-    num_neg = (df["label"] == 0).sum()
+    # Class weighting
+    num_pos = (train_df["label"] == 1).sum()
+    num_neg = (train_df["label"] == 0).sum()
     pos_weight = torch.tensor([num_neg / num_pos], device=device)
 
-    model = ResNet18SingleView().to(device)
+    model = ResNet18MultiView().to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
     optimizer = Adam(model.parameters(), lr=5e-5, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=2
@@ -125,15 +98,15 @@ def main():
 
     scaler = torch.amp.GradScaler('cuda', enabled=device.type == "cuda")
 
-    num_epochs = 50
-    patience = 10
+    num_epochs = 40
+    patience = 8
     best_val_loss = float("inf")
     epochs_no_improve = 0
 
     start_time = time.time()
 
-    print(f"\nStarting Training (Patience: {patience} epochs)")
-    print("-" * 30)
+    print("\nStarting Multi-View Training")
+    print("-" * 40)
 
     for epoch in range(num_epochs):
         epoch_start = time.time()
@@ -147,20 +120,20 @@ def main():
         epoch_duration = time.time() - epoch_start
         total_elapsed = time.time() - start_time
 
-        print(f"Epoch {epoch + 1}/{num_epochs} | LR: {current_lr:.2e}")
+        print(f"Epoch {epoch+1}/{num_epochs} | LR: {current_lr:.2e}")
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         print(f"Time: {epoch_duration:.2f}s (Total: {total_elapsed/60:.2f} min)")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
-            torch.save(model.state_dict(), "resnet18_single_view_best.pt")
+            torch.save(model.state_dict(), "resnet18_multi_view_best.pt")
             print("✓ Saved new best model")
         else:
             epochs_no_improve += 1
             print(f"No improvement for {epochs_no_improve} epoch(s).")
 
-        print("-" * 30)
+        print("-" * 40)
 
         if epochs_no_improve >= patience:
             print("\nEarly stopping triggered.")
