@@ -3,33 +3,39 @@ import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
 
 
-class ResNet18MultiView(nn.Module):
+class ResNet18SingleView(nn.Module):
+
     def __init__(self, num_classes=1):
-        super().__init__()
+        super(ResNet18SingleView, self).__init__()
 
-        # Two separate ResNet branches
-        self.cc_branch = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
-        self.mlo_branch = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+        self.model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
 
-        # Adapt first conv for grayscale
-        self.cc_branch.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.mlo_branch.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-
-        # Remove FC layers
-        self.cc_branch.fc = nn.Identity()
-        self.mlo_branch.fc = nn.Identity()
-
-        # Final classifier (512 + 512 features)
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(512 * 2, num_classes)
+        self.model.conv1 = nn.Conv2d(
+            1, 64, kernel_size=7, stride=2, padding=3, bias=False
         )
 
-    def forward(self, cc, mlo):
-        cc_feat = self.cc_branch(cc)
-        mlo_feat = self.mlo_branch(mlo)
+        num_ftrs = self.model.fc.in_features
+        self.model.fc = nn.Sequential(
+            nn.Dropout(p=0.3),
+            nn.Linear(num_ftrs, num_classes)
+        )
 
-        combined = torch.cat([cc_feat, mlo_feat], dim=1)
-        logits = self.classifier(combined)
+    def forward(self, x, return_features=False):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        features = self.model.layer4(x)
+
+        pooled = self.model.avgpool(features)
+        pooled = torch.flatten(pooled, 1)
+        logits = self.model.fc(pooled)
+
+        if return_features:
+            return logits, features
 
         return logits
