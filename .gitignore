@@ -16,6 +16,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.claude/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -25,6 +26,11 @@ env/
 Thumbs.db
 .vscode/
 .idea/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
 
 # Logs
 *.log

@@ -1,0 +1,49 @@
+.model-selector { display: flex; flex-direction: column; gap: .4rem; min-width: 320px; }
+
+.model-label {
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.select-wrapper { display: flex; align-items: center; gap: .6rem; }
+
+.model-select {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  padding: .6rem .9rem;
+  border-radius: var(--radius);
+  font-size: .9rem;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b9bc8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right .75rem center;
+  padding-right: 2.2rem;
+  transition: border-color .2s;
+}
+.model-select:focus { outline: none; border-color: var(--accent); }
+
+.model-type-badge {
+  font-size: .7rem;
+  font-weight: 600;
+  padding: .2rem .6rem;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+  letter-spacing: .3px;
+}
+
+.model-empty {
+  font-size: .85rem;
+  color: var(--text-3);
+  padding: .6rem .9rem;
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}

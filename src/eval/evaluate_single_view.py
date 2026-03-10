@@ -1,8 +1,8 @@
+import argparse
 import torch
 import pandas as pd
 import numpy as np
 import warnings
-import os
 import cv2
 import pydicom
 from pathlib import Path
@@ -51,20 +51,37 @@ def load_roi_mask(scan_path, target_size=512):
     return mask
 
 
-def dice_score(pred, target, threshold=0.5):
-    pred_bin = (pred > threshold).astype(np.float32)
+def dice_score_hard(pred, target, threshold=0.5):
+    """Binarized Dice at a fixed threshold."""
+    pred_bin   = (pred   > threshold).astype(np.float32)
     target_bin = (target > 0.5).astype(np.float32)
-
     intersection = (pred_bin * target_bin).sum()
     return (2.0 * intersection) / (pred_bin.sum() + target_bin.sum() + 1e-8)
 
 
+def dice_score_soft(pred, target):
+    """Soft Dice on continuous values — matches the training loss."""
+    pred   = pred.flatten().astype(np.float32)
+    target = target.flatten().astype(np.float32)
+    intersection = (pred * target).sum()
+    return (2.0 * intersection) / (pred.sum() + target.sum() + 1e-8)
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-path", type=str, default="models/resnet18_single_view_best.pt",
+                        help="Path to model .pt file to evaluate")
+    args = parser.parse_args()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"Using device:  {device}")
+    print(f"Model:         {args.model_path}")
+
+    PT_CSV   = "data_processed/indexed_full_mammogram_images_with_labels_pt.csv"
+    CSV_PATH = PT_CSV if Path(PT_CSV).exists() else "data_processed/indexed_full_mammogram_images_with_labels.csv"
 
     _, _, test_loader = build_dataloaders(
-        csv_path="data_processed/indexed_full_mammogram_images_with_labels.csv",
+        csv_path=CSV_PATH,
         splits_dir="splits",
         batch_size=16,
         num_workers=4,
@@ -72,7 +89,7 @@ def main():
     )
 
     model = ResNet18SingleView().to(device)
-    state_dict = torch.load("resnet18_single_view_best.pt", map_location=device, weights_only=True)
+    state_dict = torch.load(args.model_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -82,9 +99,9 @@ def main():
     cam = GradCAM(model, model.model.layer4)
 
     all_probs, all_labels = [], []
-    dice_scores = []
-    dice_malignant = []
-    dice_true_positive = []
+    soft_dice_scores, hard_dice_scores = [], []
+    soft_dice_malignant, hard_dice_malignant = [], []
+    soft_dice_tp, hard_dice_tp = [], []
     print("Running Inference with Grad-CAM + Dice...")
 
 
@@ -117,16 +134,18 @@ def main():
             mask = load_roi_mask(file_paths[i])
 
             if mask is not None:
-                d = dice_score(heatmap, mask)
-                dice_scores.append(d)
+                sd = dice_score_soft(heatmap, mask)
+                hd = dice_score_hard(heatmap, mask)
+                soft_dice_scores.append(sd)
+                hard_dice_scores.append(hd)
 
-                # Malignant only
                 if labels[i].item() == 1:
-                    dice_malignant.append(d)
+                    soft_dice_malignant.append(sd)
+                    hard_dice_malignant.append(hd)
 
-                    # True positive only
                     if probs[i] >= 0.5:
-                        dice_true_positive.append(d)
+                        soft_dice_tp.append(sd)
+                        hard_dice_tp.append(hd)
 
     all_probs = np.array(all_probs)
     all_labels = np.array(all_labels)
@@ -134,21 +153,23 @@ def main():
     auc = roc_auc_score(all_labels, all_probs)
     acc = accuracy_score(all_labels, all_probs >= 0.5)
     rec = recall_score(all_labels, all_probs >= 0.5)
-    mean_dice = np.mean(dice_scores) if len(dice_scores) > 0 else 0.0
-    std_dice = np.std(dice_scores) if len(dice_scores) > 0 else 0.0
 
-    mean_dice_malignant = np.mean(dice_malignant) if len(dice_malignant) > 0 else 0.0
-    mean_dice_tp = np.mean(dice_true_positive) if len(dice_true_positive) > 0 else 0.0
+    def _mean(lst): return np.mean(lst) if lst else 0.0
+    def _std(lst):  return np.std(lst)  if lst else 0.0
 
     print(f"\n{'='*20} EVALUATION COMPLETE {'='*20}")
     print(f"Test Samples: {len(all_labels)}")
     print(f"AUC Score:    {auc:.4f}")
     print(f"Accuracy:     {acc:.4f}")
     print(f"Recall:       {rec:.4f}")
-    print(f"Mean Dice (All):            {mean_dice:.4f}")
-    print(f"Std Dice:                   {std_dice:.4f}")
-    print(f"Mean Dice (Malignant):      {mean_dice_malignant:.4f}")
-    print(f"Mean Dice (True Positives): {mean_dice_tp:.4f}")
+    print(f"\n--- Soft Dice (matches training loss) ---")
+    print(f"Mean Soft Dice (All):            {_mean(soft_dice_scores):.4f} ± {_std(soft_dice_scores):.4f}")
+    print(f"Mean Soft Dice (Malignant):      {_mean(soft_dice_malignant):.4f}")
+    print(f"Mean Soft Dice (True Positives): {_mean(soft_dice_tp):.4f}")
+    print(f"\n--- Hard Dice (binarized at 0.5) ---")
+    print(f"Mean Hard Dice (All):            {_mean(hard_dice_scores):.4f} ± {_std(hard_dice_scores):.4f}")
+    print(f"Mean Hard Dice (Malignant):      {_mean(hard_dice_malignant):.4f}")
+    print(f"Mean Hard Dice (True Positives): {_mean(hard_dice_tp):.4f}")
     print(f"{'='*51}")
 
 

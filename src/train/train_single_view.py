@@ -1,8 +1,10 @@
+import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
 from tqdm import tqdm
+from pathlib import Path
 import pandas as pd
 import time
 import warnings
@@ -13,53 +15,68 @@ from src.data.dataloaders import build_dataloaders
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.models._utils")
 
 
-def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
+def train_one_epoch(model, loader, criterion, optimizer, scaler, device, lambda_loc=0.1):
     model.train()
     running_loss = 0.0
+    running_cls_loss = 0.0
+    running_loc_loss = 0.0
 
     for batch in tqdm(loader, desc="Training", leave=False):
         images = batch["image"].to(device, non_blocking=True)
         labels = batch["label"].float().to(device, non_blocking=True)
-        roi_masks = batch["roi_mask"].to(device, non_blocking=True)  # preloaded in dataset
+        roi_masks = batch["roi_mask"].to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
 
+        malignant_mask = (labels == 1)
+
         with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
-            logits, activation_map = model(images, return_attention=True)
+            if lambda_loc > 0.0:
+                logits, features = model(images, return_features=True)
+            else:
+                logits = model(images)
+
             classification_loss = criterion(logits.view(-1), labels)
-            activation_map = F.interpolate(
-                activation_map,
-                size=(512, 512),
-                mode="bilinear",
-                align_corners=False
-            )
 
-            # normalize activations
-            activation_map = torch.relu(activation_map)
-            max_vals = activation_map.amax(dim=(2, 3), keepdim=True) + 1e-8
-            activation_map = activation_map / max_vals
+            if lambda_loc > 0.0 and malignant_mask.any():
+                # Compute GradCAM inline: weight layer4 channels by gradient of
+                # the classification loss, then compare against the ROI mask.
+                # retain_graph=True keeps the graph alive for the main backward.
+                # create_graph=False means grad weights are treated as constants,
+                # so loc_loss still backprops through features but not through
+                # the gradient computation itself.
+                grads = torch.autograd.grad(
+                    classification_loss, features,
+                    retain_graph=True,
+                    create_graph=False
+                )[0]
+                weights = grads.mean(dim=(2, 3), keepdim=True)
+                cam = F.relu((weights * features).sum(dim=1, keepdim=True))
+                cam = cam / (cam.amax(dim=(2, 3), keepdim=True) + 1e-8)
 
-            # malignant only
-            malignant_mask = (labels == 1)
+                cam_upsampled = F.interpolate(
+                    cam, size=(512, 512), mode="bilinear", align_corners=False
+                )
 
-            if malignant_mask.any():
                 loc_loss = dice_loss(
-                    activation_map[malignant_mask],
+                    cam_upsampled[malignant_mask],
                     roi_masks[malignant_mask]
                 )
             else:
                 loc_loss = torch.tensor(0.0, device=device)
 
-            lambda_loc = 0.1
             loss = classification_loss + lambda_loc * loc_loss
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
 
-        running_loss += loss.item()
+        running_loss     += loss.item()
+        running_cls_loss += classification_loss.item()
+        running_loc_loss += loc_loss.item()
 
-    return running_loss / len(loader)
+    n = len(loader)
+    return running_loss / n, running_cls_loss / n, running_loc_loss / n
 
 
 def eval_one_epoch(model, loader, criterion, device):
@@ -92,10 +109,20 @@ def dice_loss(pred, target, eps=1e-8):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lambda-loc", type=float, default=0.1,
+                        help="Weight for GradCAM localization loss (0 = classification only)")
+    args = parser.parse_args()
+
+    lambda_loc = args.lambda_loc
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    print(f"Lambda loc:   {lambda_loc}")
 
-    CSV_PATH = "data_processed/indexed_full_mammogram_images_with_labels.csv"
+    # Use preprocessed .pt CSV if available, otherwise fall back to raw DICOMs
+    PT_CSV = "data_processed/indexed_full_mammogram_images_with_labels_pt.csv"
+    CSV_PATH = PT_CSV if Path(PT_CSV).exists() else "data_processed/indexed_full_mammogram_images_with_labels.csv"
     SPLITS_DIR = "splits"
 
     train_loader, val_loader, _ = build_dataloaders(
@@ -138,7 +165,9 @@ def main():
     for epoch in range(num_epochs):
         epoch_start = time.time()
 
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, scaler, device)
+        train_loss, cls_loss, loc_loss = train_one_epoch(
+            model, train_loader, criterion, optimizer, scaler, device, lambda_loc
+        )
         val_loss = eval_one_epoch(model, val_loader, criterion, device)
 
         scheduler.step(val_loss)
@@ -148,13 +177,14 @@ def main():
         total_elapsed = time.time() - start_time
 
         print(f"Epoch {epoch + 1}/{num_epochs} | LR: {current_lr:.2e}")
-        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        print(f"Train Loss: {train_loss:.4f} (Cls: {cls_loss:.4f} | Loc: {loc_loss:.4f}) | Val Loss: {val_loss:.4f}")
         print(f"Time: {epoch_duration:.2f}s (Total: {total_elapsed/60:.2f} min)")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
-            torch.save(model.state_dict(), "resnet18_single_view_best.pt")
+            save_path = f"models/resnet18_single_view_best_loc{lambda_loc}.pt"
+            torch.save(model.state_dict(), save_path)
             print("✓ Saved new best model")
         else:
             epochs_no_improve += 1

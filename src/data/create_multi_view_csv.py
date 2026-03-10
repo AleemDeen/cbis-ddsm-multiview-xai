@@ -8,7 +8,7 @@ def main():
     df = pd.read_csv(INPUT_CSV)
 
     # Keep only full mammograms
-    [df["is_full_mammogram"].astype(str).str.upper() == "TRUE"]
+    df = df[df["is_full_mammogram"].astype(str).str.upper() == "TRUE"]
 
     # Keep only CC and MLO views
     df = df[df["view"].isin(["CC", "MLO"])]

@@ -10,7 +10,7 @@ from src.models.resnet18_single_view import ResNet18SingleView
 from src.data.mammogram_dataset import CBISDDSMImageDataset
 
 
-MODEL_PATH = "resnet18_single_view_best.pt"
+MODEL_PATH = "models/resnet18_single_view_best.pt"
 CSV_PATH = "data_processed/indexed_full_mammogram_images_with_labels.csv"
 OUTPUT_DIR = "results/single_case_visualisation"
 TARGET_SIZE = 512

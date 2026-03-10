@@ -87,13 +87,13 @@ class CBISDDSMImageDataset(Dataset):
 
         file_path = row["file_path"]
 
-        # Load image
-        image = self._load_dicom(Path(file_path))
-        image = torch.from_numpy(image).unsqueeze(0)
-
-        # Load ROI mask
-        mask = self._load_roi_mask(file_path)
-        mask = torch.from_numpy(mask).unsqueeze(0)
+        # Use preprocessed .pt tensors if available (much faster than DICOM)
+        if "image_pt_path" in self.df.columns and "mask_pt_path" in self.df.columns:
+            image = torch.load(row["image_pt_path"], weights_only=True)
+            mask  = torch.load(row["mask_pt_path"],  weights_only=True)
+        else:
+            image = torch.from_numpy(self._load_dicom(Path(file_path))).unsqueeze(0)
+            mask  = torch.from_numpy(self._load_roi_mask(file_path)).unsqueeze(0)
 
         if self.transform:
             image = self.transform(image)
