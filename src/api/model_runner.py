@@ -240,8 +240,14 @@ def run_inference(model_name: str, cc_bytes: bytes, mlo_bytes: bytes | None) -> 
             mlo_mask = (mlo_mask + torch.flip(mlo_mask_flip, dims=[3])) / 2.0
 
         prob        = torch.sigmoid(logits).item()
-        cc_mask_np  = cc_mask[0, 0].cpu().numpy()
-        mlo_mask_np = mlo_mask[0, 0].cpu().numpy()
+
+        # Logit gating — scale mask intensity by classifier confidence above 0.5.
+        # A 95%-confident prediction shows the full mask; a 55%-confident one
+        # is dampened to 50% intensity, reducing noise from borderline cases.
+        # gate ∈ [0, 1]:  gate = (prob - 0.5) / 0.5  clamped to [0, 1]
+        gate        = min(max((prob - 0.5) / 0.5, 0.0), 1.0)
+        cc_mask_np  = (cc_mask[0, 0].cpu().numpy() * gate)
+        mlo_mask_np = (mlo_mask[0, 0].cpu().numpy() * gate)
 
         # Only render localization overlays when the model predicts malignant —
         # for benign cases the seg head output has no clinical meaning.

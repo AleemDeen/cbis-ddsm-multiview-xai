@@ -37,15 +37,20 @@ COLOURS = {
     "SV Baseline":    "#4C72B0",
     "SV Best":        "#55A868",
     "MV Baseline":    "#C44E52",
-    "MV Best (Seg)":  "#DD8452",
+    "MV Seg v1":      "#DD8452",
+    "MV Seg v2":      "#9467BD",
+    "MV Seg v3":      "#8C564B",
 }
-MODEL_ORDER = ["SV Baseline", "SV Best", "MV Baseline", "MV Best (Seg)"]
+MODEL_ORDER = ["SV Baseline", "SV Best", "MV Baseline", "MV Seg v1", "MV Seg v2", "MV Seg v3"]
 
-# Dice scores from README (multi-view seg model only — requires DICOM masks)
+# Hard Dice scores for seg models (malignant subset, from eval script output)
 SEG_DICE = {
-    "CC Hard Dice\n(malignant)":       0.4719,
-    "MLO Hard Dice\n(malignant)":      0.5129,
-    "MLO Hard Dice\n(true positives)": 0.5545,
+    "MV Seg v1\nCC (mal)":  0.4719,
+    "MV Seg v1\nMLO (mal)": 0.5129,
+    "MV Seg v2\nCC (mal)":  0.4617,
+    "MV Seg v2\nMLO (mal)": 0.4858,
+    "MV Seg v3\nCC (mal)":  0.4515,
+    "MV Seg v3\nMLO (mal)": 0.4544,
 }
 
 
@@ -269,21 +274,28 @@ def plot_auc_recall(results):
 def plot_dice_scores():
     labels = list(SEG_DICE.keys())
     values = list(SEG_DICE.values())
+    palette = []
+    for lbl in labels:
+        if "v1" in lbl: palette.append(COLOURS["MV Seg v1"])
+        elif "v2" in lbl: palette.append(COLOURS["MV Seg v2"])
+        else: palette.append(COLOURS["MV Seg v3"])
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    bars = ax.bar(labels, values, color=COLOURS["MV Best (Seg)"],
-                  alpha=0.88, edgecolor="white", linewidth=0.5, width=0.5)
+    fig, ax = plt.subplots(figsize=(9, 4))
+    bars = ax.bar(labels, values, color=palette,
+                  alpha=0.88, edgecolor="white", linewidth=0.5, width=0.55)
     for bar, v in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.008,
-                f"{v:.4f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+                f"{v:.4f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
 
+    legend_patches = [mpatches.Patch(color=COLOURS[f"MV Seg v{i}"], label=f"MV Seg v{i}") for i in (1,2,3)]
+    ax.legend(handles=legend_patches, fontsize=8, loc="upper right")
     ax.set_ylim(0, 0.75)
-    ax.set_ylabel("Hard Dice Score", fontsize=10)
-    ax.set_title("MV Best (Seg) — Localisation Hard Dice Scores", fontsize=11, fontweight="bold")
+    ax.set_ylabel("Hard Dice Score (malignant subset)", fontsize=10)
+    ax.set_title("Seg Model Localisation — Hard Dice Scores (all versions)", fontsize=11, fontweight="bold")
     ax.spines[["top", "right"]].set_visible(False)
     ax.yaxis.grid(True, linestyle="--", alpha=0.6)
     ax.set_axisbelow(True)
-    ax.tick_params(axis="x", labelsize=9)
+    ax.tick_params(axis="x", labelsize=8)
     fig.tight_layout()
     save(fig, "seg_dice_scores.png")
 
@@ -335,7 +347,7 @@ def plot_summary_table(results):
 def plot_sv_vs_mv(results):
     """Side-by-side AUC bar chart highlighting the single→multi gain."""
     sv_names = ["SV Baseline", "SV Best"]
-    mv_names = ["MV Baseline", "MV Best (Seg)"]
+    mv_names = [n for n in ["MV Baseline", "MV Seg v1", "MV Seg v2", "MV Seg v3"] if n in results]
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
     fig.suptitle("Single-View vs Multi-View: AUC Comparison", fontsize=12,
@@ -345,8 +357,9 @@ def plot_sv_vs_mv(results):
                                  ["Single-View Models", "Multi-View Models"]):
         names = group
         vals  = [results[n]["AUC"] for n in names]
+        w     = 0.4 if len(names) <= 2 else 0.6
         bars  = ax.bar(names, vals, color=[COLOURS[n] for n in names],
-                       alpha=0.88, edgecolor="white", linewidth=0.5, width=0.4)
+                       alpha=0.88, edgecolor="white", linewidth=0.5, width=w)
         for bar, v in zip(bars, vals):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
                     f"{v:.4f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
@@ -366,10 +379,12 @@ def plot_sv_vs_mv(results):
 # ── Main ───────────────────────────────────────────────────────────────────
 
 EVAL_CONFIG = {
-    "SV Baseline":   (run_single_view, "models/resnet18_single_view_best_baseline.pt", {}),
-    "SV Best":       (run_single_view, "models/resnet18_single_view_best_loc0.0.pt",   {}),
-    "MV Baseline":   (run_multi_view,  "models/resnet18_multi_view_best_loc0.0.pt",    {"seg": False}),
-    "MV Best (Seg)": (run_multi_view,  "models/resnet18_multi_view_seg.pt",            {"seg": True}),
+    "SV Baseline": (run_single_view, "models/resnet18_single_view_best_baseline.pt", {}),
+    "SV Best":     (run_single_view, "models/resnet18_single_view_best_loc0.0.pt",   {}),
+    "MV Baseline": (run_multi_view,  "models/resnet18_multi_view_best_loc0.0.pt",    {"seg": False}),
+    "MV Seg v1":   (run_multi_view,  "models/resnet18_multi_view_seg.pt",            {"seg": True}),
+    "MV Seg v2":   (run_multi_view,  "models/resnet18_multi_view_seg_v2.pt",         {"seg": True}),
+    "MV Seg v3":   (run_multi_view,  "models/resnet18_multi_view_seg_v3.pt",         {"seg": True}),
 }
 
 
