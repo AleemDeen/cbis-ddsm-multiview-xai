@@ -35,6 +35,9 @@ dist/
 # Logs
 *.log
 
+# Generated graph outputs (keep the generator script, not the PNGs)
+graphs/*.png
+
 # Model checkpoints
 *.pt
 *.pth
