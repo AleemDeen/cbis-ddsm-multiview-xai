@@ -56,25 +56,43 @@ def heatmap_overlay_base64(img: np.ndarray, heatmap: np.ndarray, alpha: float = 
     return _to_base64(overlay[:, :, ::-1])   # BGR→RGB
 
 
-def mask_overlay_base64(img: np.ndarray, mask: np.ndarray, alpha: float = 0.55) -> str:
+def mask_overlay_base64(img: np.ndarray, mask: np.ndarray,
+                         alpha: float = 0.65,
+                         percentile: float = 82.0) -> str:
     """
-    Jet-colormap overlay for segmentation mask.
-    Normalises the mask to its own [min, max] range so relative activation
-    differences are visible even when the seg head outputs uniformly high values.
-    Per-pixel alpha ensures low-activation areas stay close to the original.
+    Focused jet-colormap overlay for segmentation masks.
+
+    Pipeline:
+      1. Suppress heatmap on black background (breast tissue mask).
+      2. Percentile threshold — only the top (100-percentile)% of activations
+         within the breast are rendered; everything below is transparent.
+      3. Gaussian smoothing to remove high-frequency noise.
+      4. Per-pixel alpha blend: unactivated regions show only the original image.
     """
     img_rgb = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_GRAY2RGB)
 
-    # Normalise to full [0, 1] range to reveal relative hotspots
-    m_min, m_max = mask.min(), mask.max()
-    norm = (mask - m_min) / (m_max - m_min + 1e-8)
+    # 1. Breast tissue mask — suppress heatmap on pure-black background
+    breast = (img > 0.05).astype(np.float32)
+    mask   = mask * breast
 
-    colored = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    colored_rgb = colored[:, :, ::-1]  # BGR → RGB
+    # 2. Percentile threshold computed only within breast tissue
+    breast_vals = mask[breast > 0]
+    threshold   = float(np.percentile(breast_vals, percentile)) if len(breast_vals) > 0 \
+                  else float(np.percentile(mask, percentile))
+    focused = np.where(mask >= threshold, mask, 0.0)
 
-    # Fixed alpha blend so the colormap is always visible across the full image
-    overlay = cv2.addWeighted(img_rgb, 1.0 - alpha, colored_rgb, alpha, 0)
-    return _to_base64(overlay.astype(np.uint8))
+    # 3. Normalise active region then smooth
+    m_max   = focused.max()
+    norm    = focused / (m_max + 1e-8)
+    norm    = cv2.GaussianBlur(norm.astype(np.float32), (15, 15), 0)
+
+    # 4. Per-pixel alpha: high-activation pixels get full alpha, others stay transparent
+    alpha_map = (norm * alpha)[..., np.newaxis]           # (H, W, 1)
+    colored   = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    colored_rgb = colored[:, :, ::-1]                     # BGR → RGB
+
+    overlay = ((1.0 - alpha_map) * img_rgb + alpha_map * colored_rgb).clip(0, 255).astype(np.uint8)
+    return _to_base64(overlay)
 
 
 # ─────────────────────────────── GradCAM ────────────────────────────────────
@@ -211,11 +229,19 @@ def run_inference(model_name: str, cc_bytes: bytes, mlo_bytes: bytes | None) -> 
 
         model.eval()
         with torch.no_grad():
+            # Forward pass on original orientation
             logits, cc_mask, mlo_mask = model(cc_tensor, mlo_tensor, return_masks=True)
 
-        prob       = torch.sigmoid(logits).item()
-        cc_mask_np = cc_mask[0, 0].cpu().numpy()
-        mlo_mask_np= mlo_mask[0, 0].cpu().numpy()
+            # TTA: horizontal flip — average with flipped prediction for smoother masks
+            cc_flip  = torch.flip(cc_tensor,  dims=[3])
+            mlo_flip = torch.flip(mlo_tensor, dims=[3])
+            _, cc_mask_flip, mlo_mask_flip = model(cc_flip, mlo_flip, return_masks=True)
+            cc_mask  = (cc_mask  + torch.flip(cc_mask_flip,  dims=[3])) / 2.0
+            mlo_mask = (mlo_mask + torch.flip(mlo_mask_flip, dims=[3])) / 2.0
+
+        prob        = torch.sigmoid(logits).item()
+        cc_mask_np  = cc_mask[0, 0].cpu().numpy()
+        mlo_mask_np = mlo_mask[0, 0].cpu().numpy()
 
         # Only render localization overlays when the model predicts malignant —
         # for benign cases the seg head output has no clinical meaning.
