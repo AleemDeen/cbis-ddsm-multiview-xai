@@ -33,7 +33,7 @@ Other choices:
 
 Usage:
     python -m src.train.finetune_multi_view_seg_v4 \
-        --base-model models/resnet18_multi_view_seg.pt \
+        --base-model models/mv_baseline.pt \
         --epochs 40
 """
 
@@ -203,8 +203,8 @@ def eval_seg_metrics(model, loader, criterion, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-model",    type=str,   default="models/resnet18_multi_view_seg.pt",
-                        help="Start from v1 — best recall and Dice before mask-quality issues")
+    parser.add_argument("--base-model",    type=str,   default="models/mv_baseline.pt",
+                        help="Pre-trained MV classifier to fine-tune seg heads from")
     parser.add_argument("--epochs",        type=int,   default=40)
     parser.add_argument("--lambda-seg",    type=float, default=2.0)
     parser.add_argument("--lambda-sparse", type=float, default=0.01)

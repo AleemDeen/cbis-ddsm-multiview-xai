@@ -47,7 +47,7 @@ def main():
     # --------------------------------------------------
     model = ResNet18SingleView().to(device)
     model.load_state_dict(
-        torch.load("models/resnet18_single_view_best.pt", map_location=device)
+        torch.load("models/sv_best.pt", map_location=device, weights_only=True)
     )
     model.eval()
 

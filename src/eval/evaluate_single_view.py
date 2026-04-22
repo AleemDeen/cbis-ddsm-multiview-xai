@@ -69,7 +69,7 @@ def dice_score_soft(pred, target):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="models/resnet18_single_view_best.pt",
+    parser.add_argument("--model-path", type=str, default="models/sv_best.pt",
                         help="Path to model .pt file to evaluate")
     args = parser.parse_args()
 
