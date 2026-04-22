@@ -11,8 +11,8 @@
   align-items: center;
   justify-content: center;
 }
-.upload-area:hover       { border-color: var(--accent); background: rgba(79,126,247,.04); }
-.upload-area.dragging    { border-color: var(--accent); background: rgba(79,126,247,.08); }
+.upload-area:hover       { border-color: var(--accent); background: rgba(0,59,37,.04); }
+.upload-area.dragging    { border-color: var(--accent); background: rgba(0,59,37,.08); }
 .upload-area.has-file    { border-style: solid; border-color: var(--success); background: rgba(34,197,94,.04); }
 
 .upload-prompt { display: flex; align-items: center; gap: 1.25rem; }

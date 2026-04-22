@@ -71,9 +71,14 @@ def mask_overlay_base64(img: np.ndarray, mask: np.ndarray,
     """
     img_rgb = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_GRAY2RGB)
 
-    # 1. Breast tissue mask — suppress heatmap on pure-black background
-    breast = (img > 0.05).astype(np.float32)
-    mask   = mask * breast
+    # 1. Breast tissue mask — suppress heatmap on pure-black background.
+    # Erode the mask to remove the breast boundary band, which the seg head
+    # tends to spuriously highlight due to the sharp intensity edge there.
+    breast_binary = (img > 0.05).astype(np.uint8)
+    kernel        = np.ones((25, 25), np.uint8)
+    breast_eroded = cv2.erode(breast_binary, kernel, iterations=2)
+    breast        = breast_eroded.astype(np.float32)
+    mask          = mask * breast
 
     # 2. Percentile threshold computed only within breast tissue
     breast_vals = mask[breast > 0]

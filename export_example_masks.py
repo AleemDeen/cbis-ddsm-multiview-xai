@@ -9,7 +9,6 @@ Run from project root:
     python export_example_masks.py
 """
 
-import io
 import warnings
 from pathlib import Path
 
@@ -17,7 +16,6 @@ import cv2
 import numpy as np
 import pandas as pd
 import pydicom
-import torch
 from PIL import Image
 
 warnings.filterwarnings("ignore")
@@ -34,27 +32,74 @@ ROI_COLOUR = (0, 220, 80)   # RGB
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def load_dicom(path: Path, size: int = 512) -> np.ndarray:
-    """Load a DICOM as a float32 [0,1] array."""
+def load_dicom(path: Path, size: int = 512):
+    """Load a DICOM as a float32 [0,1] array. Returns (img, orig_shape)."""
     ds  = pydicom.dcmread(str(path))
     img = ds.pixel_array.astype(np.float32)
     if getattr(ds, "PhotometricInterpretation", "") == "MONOCHROME1":
         img = img.max() - img
+    orig_shape = img.shape  # (H, W) before resize
     img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
     img -= img.min()
     if img.max() > 0:
         img /= img.max()
-    return img
+    return img, orig_shape
 
 
-def load_mask(path: Path, size: int = 512) -> np.ndarray:
-    """Load a .pt mask tensor as a float32 [0,1] numpy array."""
-    t = torch.load(str(path), map_location="cpu", weights_only=True)
-    if t.dim() == 3:          # (1, H, W)
-        t = t.squeeze(0)
-    mask = t.numpy().astype(np.float32)
-    if mask.shape != (size, size):
-        mask = cv2.resize(mask, (size, size), interpolation=cv2.INTER_NEAREST)
+def load_mask_from_dicom(scan_path: Path, orig_shape: tuple, size: int = 512) -> np.ndarray:
+    """
+    Load the binary ROI mask directly from the CBIS-DDSM DICOM folder.
+
+    Selects the correct DICOM by choosing the file with the lowest pixel
+    coverage (the true binary mask, not a cropped patch image). Resizes the
+    mask to match the mammogram's original dimensions before downsampling to
+    size×size, ensuring spatial alignment.
+    """
+    scan_folder = scan_path.parents[2].name
+    roi_root    = scan_path.parents[3] / (scan_folder + "_1")
+
+    if not roi_root.exists():
+        return np.zeros((size, size), dtype=np.float32)
+
+    dcm_files = sorted(roi_root.glob("*/*/*.dcm"))
+    if not dcm_files:
+        return np.zeros((size, size), dtype=np.float32)
+
+    # Pick the DICOM with the lowest nonzero-pixel coverage — that is the
+    # binary mask. A cropped patch image fills most of its pixels.
+    best_mask     = None
+    best_coverage = float("inf")
+    for dcm_file in dcm_files:
+        ds     = pydicom.dcmread(str(dcm_file))
+        pixels = ds.pixel_array.astype(np.float32)
+        pmax   = pixels.max()
+        if pmax == 0:
+            continue
+        coverage = (pixels > pmax * 0.5).mean()
+        if coverage < best_coverage:
+            best_coverage = coverage
+            best_mask     = pixels
+
+    if best_mask is None:
+        return np.zeros((size, size), dtype=np.float32)
+
+    # Align mask to mammogram's original dimensions.
+    # Padding is used instead of stretch-resize: stretching distorts spatial
+    # positions when dimensions differ slightly, causing systematic offsets.
+    mam_h, mam_w = orig_shape
+    mask_h, mask_w = best_mask.shape
+    print(f"    mammogram: {mam_h}×{mam_w}  |  mask: {mask_h}×{mask_w}")
+    if (mask_h, mask_w) != (mam_h, mam_w):
+        # Pad smaller dimension with zeros to match mammogram canvas size
+        pad_h = max(mam_h - mask_h, 0)
+        pad_w = max(mam_w - mask_w, 0)
+        best_mask = np.pad(best_mask,
+                           ((0, pad_h), (0, pad_w)),
+                           mode="constant", constant_values=0)
+        # If mask is larger, crop to mammogram size
+        best_mask = best_mask[:mam_h, :mam_w]
+
+    mask = cv2.resize(best_mask, (size, size), interpolation=cv2.INTER_NEAREST)
     mask -= mask.min()
     if mask.max() > 0:
         mask /= mask.max()
@@ -129,22 +174,21 @@ def main():
         for view in ("CC", "MLO"):
             view_l = view.lower()
 
-            # Find the DICOM in examples/
-            dcm_glob = list(OUT_DIR.glob(f"{pid}*{view}*.dcm"))
-            if not dcm_glob:
-                print(f"  [skip] no DICOM found for {pid} {view}")
+            # Load mammogram from the ORIGINAL path in the CSV — this guarantees
+            # the same coordinate space as the mask DICOM (also derived from
+            # this path). The examples/ copy may have different dimensions.
+            scan_col  = f"{view_l}_path"
+            scan_path = Path(row[scan_col])
+
+            if not scan_path.exists():
+                print(f"  [skip] original DICOM not found: {scan_path}")
                 continue
-            dcm_path = dcm_glob[0]
 
-            # Mask path from CSV
-            mask_col  = f"{view_l}_mask_pt_path"
-            mask_path = ROOT / row[mask_col]
-
-            img  = load_dicom(dcm_path)
-            mask = load_mask(mask_path) if mask_path.exists() else np.zeros((512, 512), np.float32)
+            img, orig_shape = load_dicom(scan_path)
+            mask = load_mask_from_dicom(scan_path, orig_shape)
 
             # Benign cases have ROI annotations too (benign findings) — include them
-            has_roi = mask_path.exists() and mask.max() > 0.1
+            has_roi = mask.max() > 0.1
 
             stem = f"{pid}_{lat}_{dx}_{view}"
             save_png(make_original_png(img),             OUT_DIR / f"{stem}_original.png")

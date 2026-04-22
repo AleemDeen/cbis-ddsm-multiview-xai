@@ -75,7 +75,7 @@
   transition: background .2s, opacity .2s;
   white-space: nowrap;
 }
-.btn-analyse:hover:not(:disabled) { background: #3a68e0; }
+.btn-analyse:hover:not(:disabled) { background: #005c3a; }
 .btn-analyse:disabled { opacity: .4; cursor: not-allowed; }
 .btn-analyse.loading { background: var(--accent-dim); }
 .spinner {
