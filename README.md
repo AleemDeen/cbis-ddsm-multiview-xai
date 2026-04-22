@@ -28,7 +28,7 @@ Explainable AI system for mammogram malignancy classification using the CBIS-DDS
 
 This system implements a **dual-branch ResNet18** architecture that processes CC and MLO mammogram views simultaneously. The two branches are concatenated for joint malignancy classification, and a **U-Net segmentation decoder** with skip connections produces per-pixel ROI probability masks that highlight where in the image the model predicts malignancy.
 
-Three model variants are included:
+Three model architectures are included:
 
 | Model | Description |
 |---|---|
@@ -36,7 +36,14 @@ Three model variants are included:
 | `ResNet18MultiView` | CC + MLO DICOMs → malignancy score + GradCAM heatmaps |
 | `ResNet18MultiViewSeg` | CC + MLO DICOMs → malignancy score + U-Net ROI masks |
 
-**Best model:** `ResNet18MultiViewSeg` — AUC 0.8276, CC Hard Dice 0.472, MLO Hard Dice 0.513
+Four trained checkpoints are provided in `models/`:
+
+| File | Architecture | AUC |
+|---|---|---|
+| `sv_baseline.pt` | ResNet18SingleView | 0.7867 |
+| `sv_best.pt` | ResNet18SingleView | 0.7569 |
+| `mv_baseline.pt` | ResNet18MultiView | 0.8321 |
+| `mv_best.pt` | ResNet18MultiViewSeg | 0.8276 |
 
 The system includes a **FastAPI backend** and **React frontend** for interactive inference via a web interface.
 
@@ -83,12 +90,17 @@ pip install -r requirements.txt
 
 ```
 cbis-ddsm-multiview-xai-main/
-├── data/                          # Raw CBIS-DDSM DICOMs (not tracked by git)
+├── models/                        # Trained model checkpoints
+│   ├── sv_baseline.pt             # SV Baseline  (AUC 0.7867)
+│   ├── sv_best.pt                 # SV Best      (AUC 0.7569)
+│   ├── mv_baseline.pt             # MV Baseline  (AUC 0.8321)
+│   └── mv_best.pt                 # MV Best      (AUC 0.8276)
 ├── data_processed/                # Preprocessed .pt tensors + CSV index (generated)
 ├── splits/                        # Train / val / test case ID lists
-├── models/                        # Saved model checkpoints (.pt files)
 ├── examples/                      # 5 example patient DICOM pairs for quick testing
-├── sanity_checks/                 # Dataset and dataloader smoke tests
+├── architectures/                 # Architecture diagram PNGs
+├── graphs/                        # Model comparison graphs
+├── debug/                         # Sanity checks and debug scripts
 ├── src/
 │   ├── models/
 │   │   ├── resnet18_single_view.py      # Single-view ResNet18
@@ -102,16 +114,16 @@ cbis-ddsm-multiview-xai-main/
 │   │   ├── create_splits.py             # Generate train/val/test splits
 │   │   └── build_case_level_labels.py   # Build case-level label CSV
 │   ├── train/
-│   │   ├── train_single_view.py         # Train single-view classifier
-│   │   ├── train_multi_view.py          # Train dual-branch classifier
-│   │   ├── finetune_multi_view_seg.py   # Fine-tune U-Net seg heads (recommended)
-│   │   └── finetune_multi_view_loc.py   # Fine-tune with GradCAM loc loss (experimental)
+│   │   ├── train_single_view.py         # Train single-view classifier → sv_best.pt
+│   │   ├── train_multi_view.py          # Train dual-branch classifier → mv_baseline.pt
+│   │   └── finetune_multi_view_seg_v4.py  # Fine-tune U-Net seg heads → mv_best.pt
 │   ├── eval/
 │   │   ├── evaluate_single_view.py      # Evaluate single-view model
 │   │   └── evaluate_multi_view.py       # Evaluate multi-view model (GradCAM or seg)
 │   ├── xai/
 │   │   ├── gradcam.py                   # GradCAM implementation
-│   │   └── scorecam.py                  # ScoreCAM implementation
+│   │   ├── scorecam.py                  # ScoreCAM implementation
+│   │   └── run_gradcam_single_view.py   # GradCAM visualisation script
 │   ├── api/
 │   │   ├── server.py                    # FastAPI app
 │   │   └── model_runner.py              # Inference, GradCAM, mask overlay
@@ -119,12 +131,15 @@ cbis-ddsm-multiview-xai-main/
 │       ├── src/
 │       │   ├── App.jsx
 │       │   └── components/
-│       │       ├── ResultsPanel.jsx
-│       │       └── ImageCard.jsx
+│       │       ├── ModelSelector.jsx
+│       │       ├── UploadArea.jsx
+│       │       └── ResultsPanel.jsx
 │       ├── package.json
 │       └── vite.config.js
+├── generate_graphs.py             # Reproduce model comparison graphs
+├── generate_architectures.py      # Reproduce architecture diagrams
+├── export_example_masks.py        # Export ground-truth ROI overlays for examples/
 ├── requirements.txt
-├── CLAUDE.md                      # Detailed technical reference
 └── README.md
 ```
 
@@ -226,36 +241,33 @@ All models are saved to the `models/` directory.
 python -m src.train.train_single_view
 ```
 
-Saves: `models/resnet18_single_view_best.pt`
+Saves: `models/sv_best.pt`
 
-### Multi-view classifier
+### Multi-view classifier (MV Baseline)
 
 ```bash
-python -m src.train.train_multi_view --lambda-loc 0.0
+python -m src.train.train_multi_view
 ```
 
-- `--lambda-loc 0.0` — classification only **(recommended, best AUC)**
-- `--lambda-loc 0.1` — adds GradCAM localisation loss (reduces AUC in practice)
+Saves: `models/mv_baseline.pt`
 
-Saves: `models/resnet18_multi_view_best_loc0.0.pt`
+### U-Net segmentation head fine-tuning (MV Best)
 
-### U-Net segmentation head fine-tuning (two-stage — recommended)
-
-Train the classification model first (step above), then fine-tune the U-Net decoders:
+Train the MV Baseline first, then fine-tune the U-Net decoders:
 
 ```bash
-python -m src.train.finetune_multi_view_seg --base-model models/resnet18_multi_view_best_loc0.0.pt --epochs 40
+python -m src.train.finetune_multi_view_seg_v4 --base-model models/mv_baseline.pt --epochs 40
 ```
 
 **What this does:**
-- Loads the pre-trained classification backbone
-- Freezes `conv1`, `layer1`, `layer2`, and the classifier
+- Loads the pre-trained classification backbone (`mv_baseline.pt`)
+- Freezes `conv1`, `layer1`, `layer2`, and the classifier head
 - Unfreezes `layer3` and `layer4` so features become spatially discriminative
 - Trains two U-Net decoders (one per view) with skip connections from all four ResNet stages
 - Combined loss: classification BCE + weighted segmentation BCE + Dice
 - Backbone LR: `1e-5` | Decoder LR: `1e-3` | Batch size: `8`
 
-Saves: `models/resnet18_multi_view_seg.pt`
+Saves: `models/mv_best.pt`
 
 ---
 
@@ -264,32 +276,38 @@ Saves: `models/resnet18_multi_view_seg.pt`
 ### Single-view
 
 ```bash
-python -m src.eval.evaluate_single_view --model-path models/resnet18_single_view_best.pt
+python -m src.eval.evaluate_single_view --model-path models/sv_best.pt
 ```
 
 ### Multi-view (GradCAM)
 
 ```bash
-python -m src.eval.evaluate_multi_view --model-path models/resnet18_multi_view_best_loc0.0.pt
+python -m src.eval.evaluate_multi_view --model-path models/mv_baseline.pt
 ```
 
 ### Multi-view with U-Net seg heads
 
 ```bash
-python -m src.eval.evaluate_multi_view --model-path models/resnet18_multi_view_seg.pt --seg-head
+python -m src.eval.evaluate_multi_view --model-path models/mv_best.pt --seg-head
 ```
 
 Reports AUC, accuracy, recall, and soft/hard Dice scores for both CC and MLO views across all, malignant-only, and true-positive subsets.
 
-### Best results (`resnet18_multi_view_seg.pt`)
+### Results summary
+
+| Model | AUC | Accuracy | Recall | Specificity |
+|---|---|---|---|---|
+| SV Baseline (`sv_baseline.pt`) | 0.7867 | 0.7074 | 0.7892 | 0.6348 |
+| SV Best (`sv_best.pt`) | 0.7569 | 0.6843 | 0.7157 | 0.6565 |
+| MV Baseline (`mv_baseline.pt`) | 0.8321 | 0.7735 | 0.8434 | 0.7143 |
+| MV Best (`mv_best.pt`) | 0.8276 | 0.7680 | 0.7470 | 0.7857 |
+
+`mv_best.pt` localisation (seg head, malignant subset):
 
 | Metric | Value |
 |---|---|
-| AUC | 0.8276 |
-| Accuracy | 0.7680 |
-| Recall | 0.7470 |
-| CC Hard Dice (malignant) | 0.4719 |
-| MLO Hard Dice (malignant) | 0.5129 |
+| CC Hard Dice | 0.4719 |
+| MLO Hard Dice | 0.5129 |
 | MLO Hard Dice (true positives) | 0.5545 |
 
 ---
@@ -321,12 +339,12 @@ The server will be available at `http://localhost:8000`.
 | `GET` | `/models` | List all `.pt` files in the `models/` folder |
 | `POST` | `/predict` | Run inference on uploaded DICOM(s) |
 
-### Model selection
+### Model auto-detection
 
-The backend auto-detects model type from the filename:
-- `"single"` in name → single-view model + GradCAM
-- `"seg"` in name → multi-view model + U-Net seg masks
-- `"multi"` in name → multi-view model + GradCAM
+The backend detects model type from the filename:
+- `sv_*.pt` → single-view model + GradCAM
+- `mv_best.pt` → multi-view model + U-Net seg masks
+- `mv_*.pt` → multi-view model + GradCAM
 
 ---
 
@@ -387,14 +405,14 @@ python -m src.data.create_splits
 # 6. Preprocess DICOMs to .pt tensors (recommended)
 python -m src.data.preprocess_multi_view_to_pt
 
-# 7. Train classification model
-python -m src.train.train_multi_view --lambda-loc 0.0
+# 7. Train MV Baseline
+python -m src.train.train_multi_view
 
-# 8. Fine-tune U-Net seg heads
-python -m src.train.finetune_multi_view_seg --base-model models/resnet18_multi_view_best_loc0.0.pt --epochs 40
+# 8. Fine-tune U-Net seg heads (MV Best)
+python -m src.train.finetune_multi_view_seg_v4 --base-model models/mv_baseline.pt --epochs 40
 
 # 9. Evaluate
-python -m src.eval.evaluate_multi_view --model-path models/resnet18_multi_view_seg.pt --seg-head
+python -m src.eval.evaluate_multi_view --model-path models/mv_best.pt --seg-head
 
 # 10. Start backend (terminal 1)
 uvicorn src.api.server:app --reload --host 0.0.0.0 --port 8000
@@ -447,5 +465,5 @@ All training and evaluation scripts automatically use CUDA if available, falling
 ## Known Limitations
 
 - **Diffuse localisation**: Hard Dice ~0.47–0.55 indicates the highlighted region covers a broad area of breast tissue rather than a tight spot around the lesion. This is a known limitation of training spatial localisation from a classification backbone with ~850 training cases.
-- **GradCAM loc loss is counterproductive for multi-view**: Adding a GradCAM localisation loss during multi-view training reduces AUC (0.8321 → 0.7429). Classification-only training (`--lambda-loc 0.0`) produces better results.
 - **Dataset size ceiling**: ~850 training cases limits the precision achievable for weakly-supervised localisation.
+- **Single dataset**: Results are from CBIS-DDSM only and may not generalise to other mammography datasets or acquisition protocols.

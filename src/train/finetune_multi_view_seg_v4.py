@@ -210,7 +210,7 @@ def main():
     parser.add_argument("--lambda-sparse", type=float, default=0.01)
     parser.add_argument("--max-coverage",  type=float, default=0.15,
                         help="Max mask pixel coverage to be considered a valid ROI (default 15%%)")
-    parser.add_argument("--save-path",     type=str,   default="models/resnet18_multi_view_seg_v4.pt")
+    parser.add_argument("--save-path",     type=str,   default="models/mv_best.pt")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

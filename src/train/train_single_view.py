@@ -183,7 +183,7 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
-            save_path = f"models/resnet18_single_view_best_loc{lambda_loc}.pt"
+            save_path = "models/sv_best.pt"
             torch.save(model.state_dict(), save_path)
             print("✓ Saved new best model")
         else:

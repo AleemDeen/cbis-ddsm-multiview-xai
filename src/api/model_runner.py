@@ -115,13 +115,20 @@ def _gradcam(features: torch.Tensor, loss: torch.Tensor, retain: bool = False) -
 
 def _detect_type(name: str) -> str:
     n = name.lower()
+    if n.startswith("sv_"):
+        return "single"
+    if n == "mv_best.pt":
+        return "multi_seg"
+    if n.startswith("mv_"):
+        return "multi"
+    # legacy fallback
     if "single" in n:
         return "single"
     if "seg" in n:
         return "multi_seg"
     if "multi" in n:
         return "multi"
-    return "single"   # default guess
+    return "single"
 
 
 MODELS_DIR = Path("models")

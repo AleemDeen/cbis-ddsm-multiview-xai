@@ -188,7 +188,7 @@ def main():
     )
     scaler    = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
 
-    save_path = f"models/resnet18_multi_view_best_loc{lambda_loc}.pt"
+    save_path = "models/mv_baseline.pt"
 
     num_epochs     = 40
     patience       = 10
