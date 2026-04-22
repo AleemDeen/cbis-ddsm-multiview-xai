@@ -47,7 +47,7 @@ def dice_score_soft(pred, target):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="models/resnet18_multi_view_best_loc0.0.pt",
+    parser.add_argument("--model-path", type=str, default="models/mv_baseline.pt",
                         help="Path to trained multi-view model .pt file")
     parser.add_argument("--seg-head", action="store_true",
                         help="Load as ResNet18MultiViewSeg and use seg head masks instead of GradCAM")

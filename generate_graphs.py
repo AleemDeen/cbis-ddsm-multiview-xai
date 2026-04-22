@@ -366,10 +366,10 @@ def plot_sv_vs_mv(results):
 # ── Main ───────────────────────────────────────────────────────────────────
 
 EVAL_CONFIG = {
-    "SV Baseline": (run_single_view, "models/resnet18_single_view_best_baseline.pt", {}),
-    "SV Best":     (run_single_view, "models/resnet18_single_view_best_loc0.0.pt",   {}),
-    "MV Baseline": (run_multi_view,  "models/resnet18_multi_view_best_loc0.0.pt",    {"seg": False}),
-    "MV Best":     (run_multi_view,  "models/resnet18_multi_view_seg.pt",            {"seg": True}),
+    "SV Baseline": (run_single_view, "models/sv_baseline.pt",   {}),
+    "SV Best":     (run_single_view, "models/sv_best.pt",       {}),
+    "MV Baseline": (run_multi_view,  "models/mv_baseline.pt",   {"seg": False}),
+    "MV Best":     (run_multi_view,  "models/mv_best.pt",       {"seg": True}),
 }
 
 
