@@ -1,4 +1,5 @@
 import argparse
+import sys
 import torch
 import torch.nn.functional as F
 import pandas as pd
@@ -45,17 +46,40 @@ def dice_score_soft(pred, target):
     return (2.0 * intersection) / (pred.sum() + target.sum() + 1e-8)
 
 
+def pick_model(default: str) -> str:
+    """Interactively choose a .pt file from models/ when running in a terminal."""
+    if not sys.stdin.isatty():
+        return default
+    candidates = sorted(Path("models").glob("*.pt"))
+    if not candidates:
+        return default
+    print("\nAvailable models:")
+    for i, p in enumerate(candidates, 1):
+        marker = " (default)" if p.name == Path(default).name else ""
+        print(f"  [{i}] {p.name}{marker}")
+    print(f"  [Enter] use default ({Path(default).name})")
+    choice = input("Select model: ").strip()
+    if not choice:
+        return default
+    if choice.isdigit() and 1 <= int(choice) <= len(candidates):
+        return str(candidates[int(choice) - 1])
+    print(f"Invalid choice, using default: {Path(default).name}")
+    return default
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="models/mv_baseline.pt",
-                        help="Path to trained multi-view model .pt file")
+    parser.add_argument("--model-path", type=str, default=None,
+                        help="Path to trained multi-view model .pt file (prompts if omitted)")
     parser.add_argument("--seg-head", action="store_true",
                         help="Load as ResNet18MultiViewSeg and use seg head masks instead of GradCAM")
     args = parser.parse_args()
 
+    model_path = args.model_path or pick_model("models/mv_baseline.pt")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device:  {device}")
-    print(f"Model:         {args.model_path}")
+    print(f"Model:         {model_path}")
 
     PT_CSV   = "data_processed/indexed_multi_view_cases_pt.csv"
     CSV_PATH = PT_CSV if Path(PT_CSV).exists() else "data_processed/indexed_multi_view_cases.csv"
@@ -76,13 +100,13 @@ def main():
 
     if args.seg_head:
         model = ResNet18MultiViewSeg().to(device)
-        state_dict = torch.load(args.model_path, map_location=device, weights_only=True)
+        state_dict = torch.load(model_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
         print("Mode: segmentation head masks")
     else:
         model = ResNet18MultiView().to(device)
-        state_dict = torch.load(args.model_path, map_location=device, weights_only=True)
+        state_dict = torch.load(model_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
         for p in model.parameters():

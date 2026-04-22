@@ -1,4 +1,5 @@
 import argparse
+import sys
 import torch
 import pandas as pd
 import numpy as np
@@ -67,15 +68,38 @@ def dice_score_soft(pred, target):
     return (2.0 * intersection) / (pred.sum() + target.sum() + 1e-8)
 
 
+def pick_model(default: str) -> str:
+    """Interactively choose a .pt file from models/ when running in a terminal."""
+    if not sys.stdin.isatty():
+        return default
+    candidates = sorted(Path("models").glob("*.pt"))
+    if not candidates:
+        return default
+    print("\nAvailable models:")
+    for i, p in enumerate(candidates, 1):
+        marker = " (default)" if p.name == Path(default).name else ""
+        print(f"  [{i}] {p.name}{marker}")
+    print(f"  [Enter] use default ({Path(default).name})")
+    choice = input("Select model: ").strip()
+    if not choice:
+        return default
+    if choice.isdigit() and 1 <= int(choice) <= len(candidates):
+        return str(candidates[int(choice) - 1])
+    print(f"Invalid choice, using default: {Path(default).name}")
+    return default
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="models/sv_best.pt",
-                        help="Path to model .pt file to evaluate")
+    parser.add_argument("--model-path", type=str, default=None,
+                        help="Path to model .pt file to evaluate (prompts if omitted)")
     args = parser.parse_args()
+
+    model_path = args.model_path or pick_model("models/sv_best.pt")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device:  {device}")
-    print(f"Model:         {args.model_path}")
+    print(f"Model:         {model_path}")
 
     PT_CSV   = "data_processed/indexed_full_mammogram_images_with_labels_pt.csv"
     CSV_PATH = PT_CSV if Path(PT_CSV).exists() else "data_processed/indexed_full_mammogram_images_with_labels.csv"
@@ -89,7 +113,7 @@ def main():
     )
 
     model = ResNet18SingleView().to(device)
-    state_dict = torch.load(args.model_path, map_location=device, weights_only=True)
+    state_dict = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
 

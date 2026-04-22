@@ -1,11 +1,34 @@
 import os
+import sys
 import torch
 import numpy as np
 import cv2
+from pathlib import Path
 
 from src.models.resnet18_single_view import ResNet18SingleView
 from src.data.dataloaders import build_dataloaders
 from src.xai.gradcam import GradCAM
+
+
+def pick_model(default: str) -> str:
+    """Interactively choose a .pt file from models/ when running in a terminal."""
+    if not sys.stdin.isatty():
+        return default
+    candidates = sorted(Path("models").glob("*.pt"))
+    if not candidates:
+        return default
+    print("\nAvailable models:")
+    for i, p in enumerate(candidates, 1):
+        marker = " (default)" if p.name == Path(default).name else ""
+        print(f"  [{i}] {p.name}{marker}")
+    print(f"  [Enter] use default ({Path(default).name})")
+    choice = input("Select model: ").strip()
+    if not choice:
+        return default
+    if choice.isdigit() and 1 <= int(choice) <= len(candidates):
+        return str(candidates[int(choice) - 1])
+    print(f"Invalid choice, using default: {Path(default).name}")
+    return default
 
 
 def overlay_heatmap(image, heatmap):
@@ -25,15 +48,15 @@ def overlay_heatmap(image, heatmap):
 
 
 def main():
+    model_path = pick_model("models/sv_best.pt")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
+    print(f"Using device: {device}")
+    print(f"Model:        {model_path}")
 
     out_dir = "results/gradcam"
     os.makedirs(out_dir, exist_ok=True)
 
-    # --------------------------------------------------
-    # Load TEST data only (batch_size = 1 REQUIRED)
-    # --------------------------------------------------
     _, _, test_loader = build_dataloaders(
         csv_path="data_processed/indexed_full_mammogram_images_with_labels.csv",
         splits_dir="splits",
@@ -42,12 +65,9 @@ def main():
         pin_memory=True,
     )
 
-    # --------------------------------------------------
-    # Load trained model
-    # --------------------------------------------------
     model = ResNet18SingleView().to(device)
     model.load_state_dict(
-        torch.load("models/sv_best.pt", map_location=device, weights_only=True)
+        torch.load(model_path, map_location=device, weights_only=True)
     )
     model.eval()
 
