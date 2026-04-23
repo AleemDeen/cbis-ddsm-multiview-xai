@@ -60,6 +60,13 @@ from src.data.multi_view_dataset import CBISDDSMMultiViewDataset
 # ── Transforms ──────────────────────────────────────────────────────────────
 
 def get_transforms(train=True):
+    """
+    Conservative augmentations for fine-tuning.
+
+    Rotations are limited to 10° (vs 15° during classifier training) because
+    the clean-mask filtered dataset is small (~181 train cases) and aggressive
+    augmentation risks degrading the tight spatial signal in the ROI masks.
+    """
     if train:
         return v2.Compose([
             v2.RandomHorizontalFlip(p=0.5),
@@ -73,6 +80,7 @@ def get_transforms(train=True):
 # ── Loss functions ───────────────────────────────────────────────────────────
 
 def dice_loss(pred, target):
+    """Soft Dice loss — insensitive to class imbalance between ROI and background."""
     pred   = pred.view(pred.size(0), -1)
     target = target.view(target.size(0), -1)
     inter  = (pred * target).sum(dim=1)
@@ -80,6 +88,13 @@ def dice_loss(pred, target):
 
 
 def focal_bce(pred, target, gamma=2.0, pos_weight=50.0):
+    """
+    Focal binary cross-entropy loss.
+
+    The focal term (1 - pt)^gamma down-weights easy background pixels so the
+    gradient is dominated by the hard foreground (ROI) pixels. pos_weight
+    compensates for the small fraction of positive pixels in the mask.
+    """
     eps = 1e-8
     bce = -(pos_weight * target * torch.log(pred + eps)
             + (1.0 - target) * torch.log(1.0 - pred + eps))
@@ -88,8 +103,16 @@ def focal_bce(pred, target, gamma=2.0, pos_weight=50.0):
 
 
 def seg_loss(pred, target, lambda_sparse):
+    """
+    Combined segmentation loss: focal BCE + soft Dice + sparsity regularisation.
+
+    The sparsity term (pred.mean()) penalises the decoder for predicting large
+    activated regions, which prevents the model from cheating by highlighting
+    the entire breast to achieve a high Dice score.
+    """
     pos = target.sum()
     neg = target.numel() - pos
+    # Cap pos_weight at 50 to prevent numerical instability when ROIs are tiny
     pw  = float((neg / (pos + 1e-8)).clamp(max=50.0))
     return focal_bce(pred, target, gamma=2.0, pos_weight=pw) \
            + dice_loss(pred, target) \
@@ -99,13 +122,25 @@ def seg_loss(pred, target, lambda_sparse):
 # ── Mask quality filter ──────────────────────────────────────────────────────
 
 def mask_coverage(pt_path: str) -> float:
-    """Return fraction of pixels > 0.5 in a saved mask tensor."""
+    """
+    Return the fraction of pixels above 0.5 in a saved mask tensor.
+
+    Used to distinguish true binary ROI masks (small coverage) from the cropped
+    patch DICOMs that CBIS-DDSM sometimes stores alongside them (large coverage).
+    """
     t = torch.load(pt_path, map_location="cpu", weights_only=True).numpy()
     return float(np.count_nonzero(t > 0.5) / t.size)
 
 
 def filter_clean_masks(df: pd.DataFrame, max_coverage: float = 0.15) -> pd.DataFrame:
-    """Keep only rows where both CC and MLO masks have tight coverage."""
+    """
+    Discard any rows where either the CC or MLO mask exceeds the coverage threshold.
+
+    CBIS-DDSM ROI folders sometimes contain a cropped image patch alongside the
+    binary mask. When the patch is loaded instead of the mask, coverage can reach
+    50–80%, making it useless as a localisation target. Keeping only tight masks
+    (≤15% coverage) ensures the decoder receives coherent spatial supervision.
+    """
     keep = []
     for _, row in tqdm(df.iterrows(), total=len(df), desc="Filtering mask quality", leave=False):
         try:
@@ -124,6 +159,7 @@ def filter_clean_masks(df: pd.DataFrame, max_coverage: float = 0.15) -> pd.DataF
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
 def load_case_ids(path):
+    """Read a plain-text split file and return a set of patient case IDs."""
     with open(path) as f:
         return set(line.strip() for line in f if line.strip())
 
@@ -133,6 +169,12 @@ def load_case_ids(path):
 def train_one_epoch(model, loader, optimizer, criterion, device,
                     lambda_seg, lambda_sparse):
     model.train()
+
+    # Keep the classifier and early backbone layers in eval mode throughout
+    # fine-tuning. The classifier is frozen entirely to preserve classification
+    # AUC. The early layers (conv1, bn1, layer1) are frozen because their
+    # batch-norm statistics are well-calibrated from ImageNet and corrupting
+    # them with a small seg-focused dataset would hurt the backbone.
     model.classifier.eval()
     for branch in [model.cc_branch, model.mlo_branch]:
         branch.conv1.eval(); branch.bn1.eval(); branch.layer1.eval()
@@ -153,6 +195,9 @@ def train_one_epoch(model, loader, optimizer, criterion, device,
 
         mal = labels.bool()
         if mal.any():
+            # Segmentation loss is only applied to malignant cases — benign cases
+            # may have ROI annotations for benign findings, but supervising the
+            # decoder on those would teach it to highlight non-malignant regions
             s = (seg_loss(cc_pred[mal],  cc_masks[mal],  lambda_sparse) +
                  seg_loss(mlo_pred[mal], mlo_masks[mal], lambda_sparse)) / 2.0
         else:
@@ -160,6 +205,8 @@ def train_one_epoch(model, loader, optimizer, criterion, device,
 
         loss = cls + lambda_seg * s
         loss.backward()
+        # Gradient clipping guards against exploding gradients from the decoder,
+        # which can occur early in fine-tuning when the seg head is randomly initialised
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         optimizer.step()
 
@@ -173,7 +220,13 @@ def train_one_epoch(model, loader, optimizer, criterion, device,
 # ── Validation ───────────────────────────────────────────────────────────────
 
 def eval_seg_metrics(model, loader, criterion, device):
-    """Dice on clean-mask val set."""
+    """
+    Evaluate segmentation quality on the clean-mask validation set.
+
+    Returns mean classification loss, mean CC Dice, and mean MLO Dice
+    computed over malignant cases only — benign Dice is not meaningful.
+    The scheduler and early-stopping criterion use mean Dice across both views.
+    """
     model.eval()
     cls_losses, cc_scores, mlo_scores = [], [], []
     with torch.no_grad():
@@ -254,10 +307,14 @@ def main():
 
     # ── Model ─────────────────────────────────────────────────────────────────
     model = ResNet18MultiViewSeg().to(device)
+    # strict=False allows loading mv_baseline.pt weights — the seg head keys
+    # are new and will be missing, which is expected at this stage
     weights = torch.load(args.base_model, map_location=device, weights_only=True)
     missing, _ = model.load_state_dict(weights, strict=False)
     print(f"\nLoaded {args.base_model}  ({len(missing)} missing keys)")
 
+    # Freeze early backbone layers and the classifier to protect classification
+    # performance whilst the decoder learns spatial localisation
     for branch in [model.cc_branch, model.mlo_branch]:
         for name, p in branch.named_parameters():
             p.requires_grad_(not any(name.startswith(k) for k in ("conv1", "bn1", "layer1")))
@@ -272,10 +329,14 @@ def main():
     pos_weight = torch.tensor([n_ben / max(n_mal, 1)], device=device)
     criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
+    # Differential learning rates: backbone gets a very low rate to avoid
+    # disturbing the pretrained features; the freshly-initialised decoder
+    # gets a higher rate to learn quickly from the segmentation signal
     optimizer = Adam([
         {"params": backbone_params, "lr": 5e-6},
         {"params": seg_params,      "lr": 5e-4},
     ])
+    # Scheduler tracks mean Dice (mode="max") rather than loss
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=4)
 

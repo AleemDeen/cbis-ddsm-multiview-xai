@@ -18,6 +18,13 @@ from src.data.multi_view_dataset import CBISDDSMMultiViewDataset
 
 
 def get_transforms(train=True):
+    """
+    Return augmentation transforms suitable for multi-view mammogram training.
+
+    Conservative augmentations only — strong geometric distortions can alter
+    the apparent position of a lesion and corrupt the spatial relationship
+    between CC and MLO views that the model is learning to exploit.
+    """
     if train:
         return v2.Compose([
             v2.RandomHorizontalFlip(p=0.5),
@@ -32,12 +39,20 @@ def get_transforms(train=True):
         ])
 
 
-def load_case_ids(path):
+def load_case_ids(path) -> set:
+    """Read a plain-text split file and return a set of patient case IDs."""
     with open(path, "r") as f:
         return set(line.strip() for line in f if line.strip())
 
 
 def dice_loss(pred, target):
+    """
+    Soft Dice loss for mask overlap.
+
+    Used during optional GradCAM localisation training. Dice is preferred over
+    pixel-wise BCE because ROI regions are small relative to the full 512×512
+    image, making BCE gradients dominated by the background class.
+    """
     pred   = pred.view(pred.size(0), -1)
     target = target.view(target.size(0), -1)
     intersection = (pred * target).sum(dim=1)
@@ -45,6 +60,14 @@ def dice_loss(pred, target):
 
 
 def train_one_epoch(model, loader, criterion, optimizer, scaler, device, lambda_loc):
+    """
+    Train for one epoch with optional per-view GradCAM localisation loss.
+
+    When lambda_loc > 0 the GradCAM computation runs inline for both the CC
+    and MLO branches separately. The graph must be retained after each branch's
+    backward until the main loss backward is complete, hence retain_graph=True
+    for the CC branch and the final combined loss.
+    """
     model.train()
     running_loss = running_cls_loss = running_loc_loss = 0.0
     n = 0
@@ -69,28 +92,29 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, lambda_
             classification_loss = criterion(logits.view(-1), labels)
 
         if lambda_loc > 0.0 and malignant_mask.any():
-            # GradCAM for CC branch (retain graph for mlo + final backward)
-            cc_grads = torch.autograd.grad(
+            # GradCAM for the CC branch — retain the graph for the MLO computation
+            cc_grads   = torch.autograd.grad(
                 classification_loss, cc_features,
                 retain_graph=True,
                 create_graph=False,
             )[0]
             cc_weights = cc_grads.mean(dim=(2, 3), keepdim=True)
-            cc_cam = F.relu((cc_weights * cc_features).sum(dim=1, keepdim=True))
-            cc_cam = cc_cam / (cc_cam.amax(dim=(2, 3), keepdim=True) + 1e-8)
-            cc_cam_up = F.interpolate(cc_cam, size=(512, 512), mode="bilinear", align_corners=False)
+            cc_cam     = F.relu((cc_weights * cc_features).sum(dim=1, keepdim=True))
+            cc_cam     = cc_cam / (cc_cam.amax(dim=(2, 3), keepdim=True) + 1e-8)
+            cc_cam_up  = F.interpolate(cc_cam, size=(512, 512), mode="bilinear", align_corners=False)
 
-            # GradCAM for MLO branch (retain graph for final backward)
-            mlo_grads = torch.autograd.grad(
+            # GradCAM for the MLO branch — retain graph for the final backward pass
+            mlo_grads   = torch.autograd.grad(
                 classification_loss, mlo_features,
                 retain_graph=True,
                 create_graph=False,
             )[0]
             mlo_weights = mlo_grads.mean(dim=(2, 3), keepdim=True)
-            mlo_cam = F.relu((mlo_weights * mlo_features).sum(dim=1, keepdim=True))
-            mlo_cam = mlo_cam / (mlo_cam.amax(dim=(2, 3), keepdim=True) + 1e-8)
-            mlo_cam_up = F.interpolate(mlo_cam, size=(512, 512), mode="bilinear", align_corners=False)
+            mlo_cam     = F.relu((mlo_weights * mlo_features).sum(dim=1, keepdim=True))
+            mlo_cam     = mlo_cam / (mlo_cam.amax(dim=(2, 3), keepdim=True) + 1e-8)
+            mlo_cam_up  = F.interpolate(mlo_cam, size=(512, 512), mode="bilinear", align_corners=False)
 
+            # Average CC and MLO localisation losses so neither view dominates
             cc_loc_loss  = dice_loss(cc_cam_up[malignant_mask],  cc_masks[malignant_mask])
             mlo_loc_loss = dice_loss(mlo_cam_up[malignant_mask], mlo_masks[malignant_mask])
             loc_loss = (cc_loc_loss + mlo_loc_loss) / 2.0
@@ -112,6 +136,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, lambda_
 
 
 def eval_one_epoch(model, loader, criterion, device):
+    """Evaluate classification loss on a held-out split."""
     model.eval()
     running_loss = 0.0
 
@@ -133,7 +158,7 @@ def eval_one_epoch(model, loader, criterion, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--lambda-loc", type=float, default=0.1,
-                        help="Weight for localization loss (0.0 = classification only)")
+                        help="Weight for the localisation loss (0.0 = classification only)")
     args = parser.parse_args()
     lambda_loc = args.lambda_loc
 
@@ -141,6 +166,7 @@ def main():
     print(f"Using device:  {device}")
     print(f"Lambda-loc:    {lambda_loc}")
 
+    # Prefer pre-cached .pt tensors to avoid per-epoch DICOM decoding overhead
     PT_CSV   = "data_processed/indexed_multi_view_cases_pt.csv"
     CSV_PATH = PT_CSV if Path(PT_CSV).exists() else "data_processed/indexed_multi_view_cases.csv"
     print(f"CSV:           {CSV_PATH}")
@@ -176,6 +202,7 @@ def main():
     train_loader = DataLoader(train_dataset, shuffle=True,  **loader_args)
     val_loader   = DataLoader(val_dataset,   shuffle=False, **loader_args)
 
+    # pos_weight is computed from the training split only to avoid test set leakage
     num_pos    = (train_df["label"] == 1).sum()
     num_neg    = (train_df["label"] == 0).sum()
     pos_weight = torch.tensor([num_neg / num_pos], device=device)
@@ -186,15 +213,15 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=2
     )
-    scaler    = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
 
     save_path = "models/mv_baseline.pt"
 
-    num_epochs     = 40
-    patience       = 10
-    best_val_loss  = float("inf")
+    num_epochs        = 40
+    patience          = 10
+    best_val_loss     = float("inf")
     epochs_no_improve = 0
-    start_time     = time.time()
+    start_time        = time.time()
 
     print(f"\nStarting Multi-View Training  (save → {save_path})")
     print("-" * 50)

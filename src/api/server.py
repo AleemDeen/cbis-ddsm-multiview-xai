@@ -1,7 +1,11 @@
 """
 FastAPI server for the Mammogram XAI application.
 
-Run from project root:
+Exposes two endpoints:
+  GET  /models   — list all available .pt checkpoints
+  POST /predict  — run inference on uploaded DICOM file(s) and return overlays
+
+Run from the project root:
     uvicorn src.api.server:app --reload --port 8000
 """
 
@@ -13,6 +17,9 @@ from src.api.model_runner import list_available_models, run_inference
 
 app = FastAPI(title="Mammogram XAI API", version="1.0.0")
 
+# Allow requests from the Vite development server and standard localhost ports.
+# Without CORS headers the browser blocks cross-origin requests from the
+# frontend (port 5173) to the API (port 8000).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
@@ -23,21 +30,30 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
+    """Simple liveness check — confirms the server is running."""
     return {"status": "ok"}
 
 
 @app.get("/models")
 def get_models():
+    """Return a list of all .pt model files found in the models/ directory."""
     models = list_available_models()
     return {"models": models}
 
 
 @app.post("/predict")
 async def predict(
-    model_name: str = Form(...),
+    model_name: str        = Form(...),
     cc_file:    UploadFile = File(...),
-    mlo_file:   UploadFile = File(None),
+    mlo_file:   UploadFile = File(None),   # optional — only required for multi-view models
 ):
+    """
+    Run inference on one or two DICOM files and return base64-encoded overlay images.
+
+    The model type is inferred automatically from the filename (sv_* = single-view,
+    mv_best.pt = segmentation, mv_* = multi-view GradCAM). The response includes
+    the original mammogram and the appropriate XAI overlay for each view.
+    """
     if not model_name.endswith(".pt"):
         raise HTTPException(400, "model_name must be a .pt filename")
 

@@ -1,10 +1,13 @@
 """
 Model comparison graph generator.
 
+Evaluates all four trained models on the held-out test split and saves seven
+comparison graphs to graphs/. Hard Dice scores for the seg model are read from
+the SEG_DICE constant rather than recomputed, since they require a separate
+evaluation pass via evaluate_multi_view.py --seg-head.
+
 Run from project root:
     python generate_graphs.py
-
-Evaluates all four models on the test split and saves comparison PNGs to graphs/.
 """
 
 import os
@@ -41,7 +44,8 @@ COLOURS = {
 }
 MODEL_ORDER = ["SV Baseline", "SV Best", "MV Baseline", "MV Best"]
 
-# Hard Dice scores for the best seg model (malignant subset, from eval script)
+# Hard Dice scores obtained from evaluate_multi_view.py --seg-head on the test split.
+# Stored here as constants so the graph script does not need to re-run inference.
 SEG_DICE = {
     "CC Hard Dice\n(malignant)":       0.4719,
     "MLO Hard Dice\n(malignant)":      0.5129,
@@ -124,6 +128,7 @@ def run_multi_view(model_path, seg=False):
 # ── Metrics ────────────────────────────────────────────────────────────────
 
 def compute_metrics(labels, probs, threshold=0.5):
+    """Compute all classification metrics from ground-truth labels and predicted probabilities."""
     preds              = (probs >= threshold).astype(int)
     tn, fp, fn, tp     = confusion_matrix(labels, preds).ravel()
     return dict(
@@ -365,6 +370,8 @@ def plot_sv_vs_mv(results):
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
+# Maps each model label to its inference function, checkpoint path, and kwargs.
+# Models not found on disk are skipped with a warning rather than crashing.
 EVAL_CONFIG = {
     "SV Baseline": (run_single_view, "models/sv_baseline.pt",   {}),
     "SV Best":     (run_single_view, "models/sv_best.pt",       {}),

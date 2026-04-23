@@ -17,13 +17,20 @@ from src.models.resnet18_multi_view import ResNet18MultiView, ResNet18MultiViewS
 from src.data.multi_view_dataset import CBISDDSMMultiViewDataset
 
 
-def load_case_ids(path):
+def load_case_ids(path) -> set:
+    """Read a plain-text split file and return a set of patient case IDs."""
     with open(path, "r") as f:
         return set(line.strip() for line in f if line.strip())
 
 
 def gradcam_heatmap(features, loss, size=512):
-    """Compute GradCAM heatmap from layer4 features and a scalar loss."""
+    """
+    Compute a Grad-CAM heatmap from a stored feature map and a scalar loss.
+
+    retain_graph=True is used here because this function is called twice in
+    sequence (once for CC, once for MLO) against the same computation graph.
+    The graph is released after the second call.
+    """
     grads   = torch.autograd.grad(loss, features, retain_graph=True, create_graph=False)[0]
     weights = grads.mean(dim=(2, 3), keepdim=True)
     cam     = F.relu((weights * features).sum(dim=1, keepdim=True))
@@ -33,6 +40,13 @@ def gradcam_heatmap(features, loss, size=512):
 
 
 def dice_score_hard(pred, target, threshold=0.5):
+    """
+    Compute Dice after binarising predictions at a fixed threshold.
+
+    Hard Dice gives a concrete measure of spatial overlap, equivalent to
+    drawing a binary boundary around the predicted region and comparing it
+    to the annotated ROI.
+    """
     pred_bin   = (pred   > threshold).astype(np.float32)
     target_bin = (target > 0.5).astype(np.float32)
     intersection = (pred_bin * target_bin).sum()
@@ -40,6 +54,12 @@ def dice_score_hard(pred, target, threshold=0.5):
 
 
 def dice_score_soft(pred, target):
+    """
+    Compute soft Dice on continuous prediction values.
+
+    Mirrors the training loss formulation to give a comparable measure
+    of how well predictions aligned with ground-truth masks during training.
+    """
     pred   = pred.flatten().astype(np.float32)
     target = target.flatten().astype(np.float32)
     intersection = (pred * target).sum()
@@ -72,7 +92,7 @@ def main():
     parser.add_argument("--model-path", type=str, default=None,
                         help="Path to trained multi-view model .pt file (prompts if omitted)")
     parser.add_argument("--seg-head", action="store_true",
-                        help="Load as ResNet18MultiViewSeg and use seg head masks instead of GradCAM")
+                        help="Load as ResNet18MultiViewSeg and evaluate seg head masks instead of GradCAM")
     args = parser.parse_args()
 
     model_path = args.model_path or pick_model("models/mv_baseline.pt")
@@ -81,6 +101,7 @@ def main():
     print(f"Using device:  {device}")
     print(f"Model:         {model_path}")
 
+    # Prefer pre-cached .pt tensors for faster data loading
     PT_CSV   = "data_processed/indexed_multi_view_cases_pt.csv"
     CSV_PATH = PT_CSV if Path(PT_CSV).exists() else "data_processed/indexed_multi_view_cases.csv"
     print(f"CSV:           {CSV_PATH}")
@@ -88,6 +109,7 @@ def main():
     df = pd.read_csv(CSV_PATH)
     df["case_id"] = df["patient_id"].str.extract(r"(P_\d+)")
 
+    # Evaluate on the held-out test split only
     test_cases = load_case_ids("splits/test_cases.txt")
     test_df    = df[df["case_id"].isin(test_cases)].reset_index(drop=True)
     print(f"Test samples:  {len(test_df)}")
@@ -99,6 +121,8 @@ def main():
     )
 
     if args.seg_head:
+        # Load the segmentation model — strict=False because a mv_baseline
+        # checkpoint can be passed here without the seg head keys
         model = ResNet18MultiViewSeg().to(device)
         state_dict = torch.load(model_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
@@ -109,18 +133,19 @@ def main():
         state_dict = torch.load(model_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
+        # Grad-CAM requires gradients even during eval
         for p in model.parameters():
             p.requires_grad_(True)
         print("Mode: GradCAM heatmaps")
 
     all_probs, all_labels = [], []
 
+    # Dice lists are split by view and subset (all / malignant only / true positives)
+    # to understand where localisation quality varies most
     cc_soft_all,  cc_hard_all  = [], []
     mlo_soft_all, mlo_hard_all = [], []
-
     cc_soft_mal,  cc_hard_mal  = [], []
     mlo_soft_mal, mlo_hard_mal = [], []
-
     cc_soft_tp,   cc_hard_tp   = [], []
     mlo_soft_tp,  mlo_hard_tp  = [], []
 
@@ -130,7 +155,7 @@ def main():
         cc        = batch["cc_image"].to(device)
         mlo       = batch["mlo_image"].to(device)
         labels    = batch["label"].float().to(device)
-        cc_masks  = batch["cc_mask"].cpu().numpy()   # (B, 1, 512, 512)
+        cc_masks  = batch["cc_mask"].cpu().numpy()    # (B, 1, 512, 512)
         mlo_masks = batch["mlo_mask"].cpu().numpy()
 
         if args.seg_head:
@@ -153,7 +178,7 @@ def main():
             lbl  = int(labels[i].item())
             prob = probs[i]
 
-            cc_cam_np   = cc_cams[i, 0]   # (512, 512)
+            cc_cam_np   = cc_cams[i, 0]    # (512, 512)
             mlo_cam_np  = mlo_cams[i, 0]
             cc_mask_np  = cc_masks[i, 0]
             mlo_mask_np = mlo_masks[i, 0]
@@ -170,6 +195,7 @@ def main():
                 cc_soft_mal.append(cc_sd);   cc_hard_mal.append(cc_hd)
                 mlo_soft_mal.append(mlo_sd); mlo_hard_mal.append(mlo_hd)
 
+                # True positives: malignant cases correctly classified as malignant
                 if prob >= 0.5:
                     cc_soft_tp.append(cc_sd);   cc_hard_tp.append(cc_hd)
                     mlo_soft_tp.append(mlo_sd); mlo_hard_tp.append(mlo_hd)
@@ -200,12 +226,12 @@ def main():
     print(f"  Malignant:      {_mean(mlo_soft_mal):.4f}")
     print(f"  True Positives: {_mean(mlo_soft_tp):.4f}")
 
-    print(f"\n--- Hard Dice (CC view, threshold=0.5) ---")
+    print(f"\n--- Hard Dice (CC view, threshold = 0.5) ---")
     print(f"  All:            {_mean(cc_hard_all):.4f} ± {_std(cc_hard_all):.4f}")
     print(f"  Malignant:      {_mean(cc_hard_mal):.4f}")
     print(f"  True Positives: {_mean(cc_hard_tp):.4f}")
 
-    print(f"\n--- Hard Dice (MLO view, threshold=0.5) ---")
+    print(f"\n--- Hard Dice (MLO view, threshold = 0.5) ---")
     print(f"  All:            {_mean(mlo_hard_all):.4f} ± {_std(mlo_hard_all):.4f}")
     print(f"  Malignant:      {_mean(mlo_hard_mal):.4f}")
     print(f"  True Positives: {_mean(mlo_hard_tp):.4f}")
