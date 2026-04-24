@@ -237,19 +237,22 @@ cbis-ddsm-multiview-xai-main/
 
 This project uses the **CBIS-DDSM** (Curated Breast Imaging Subset of DDSM) dataset.
 
-Download it from the [TCIA repository](https://www.cancerimagingarchive.net/collection/cbis-ddsm/).
+A pre-packaged copy of the dataset is available via the University of Exeter SharePoint:
 
-Place the DICOM files and CSV metadata inside a `data/` folder at the project root:
+**[Download dataset.zip](https://universityofexeteruk-my.sharepoint.com/:u:/g/personal/aa1502_exeter_ac_uk/IQCQXDC78I13QY01kDMoZlK3Aefy6i6p_SS6yU9rEmJAp-c?e=DjcXpF)**
+
+> **Note:** This link is only accessible to members of the University of Exeter organisation. If you do not have access, the full dataset can be downloaded from the [TCIA repository](https://www.cancerimagingarchive.net/collection/cbis-ddsm/).
+
+Once downloaded, unzip `dataset.zip` and place the resulting `dataset/` folder in the project root:
 
 ```
-data/
-├── CBIS-DDSM/
-│   └── <case folders with DICOMs>
-└── cbis_ddsm_metadata/
-    ├── mass_case_description_train_set.csv
-    ├── mass_case_description_test_set.csv
-    ├── calc_case_description_train_set.csv
-    └── calc_case_description_test_set.csv
+cbis-ddsm-multiview-xai-main/
+├── dataset/                   ← place the unzipped folder here
+│   └── cbis_ddsm/
+│       └── <case folders with DICOMs>
+├── src/
+├── models/
+└── ...
 ```
 
 > The `data/` directory is excluded from git (see `.gitignore`). It must be set up locally on each machine.
