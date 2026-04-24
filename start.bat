@@ -1,4 +1,13 @@
 @echo off
+
+:: If not already inside a persistent cmd /k session, relaunch inside one.
+:: This guarantees the window stays open regardless of errors or early exits.
+if not defined RELAUNCHED (
+    set RELAUNCHED=1
+    cmd /k ""%~f0""
+    exit
+)
+
 setlocal enabledelayedexpansion
 title Mammogram XAI - Launcher
 
