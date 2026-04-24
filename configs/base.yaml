@@ -4,6 +4,6 @@ PROCESSED_DATA_DIR: "./data_processed"
 SEED: 42
 IMAGE_SIZE: 512
 
-SPLIT_DIR: "./data_processed/splits"
+SPLIT_DIR: "./splits"
 RUNS_DIR: "./runs"
 RESULTS_DIR: "./results"

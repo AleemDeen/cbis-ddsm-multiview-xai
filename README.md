@@ -182,12 +182,9 @@ cbis-ddsm-multiview-xai-main/
 │   ├── sv_best.pt                 # SV Best      (AUC 0.7569)
 │   ├── mv_baseline.pt             # MV Baseline  (AUC 0.8321)
 │   └── mv_best.pt                 # MV Best      (AUC 0.8276)
-├── data_processed/                # Preprocessed .pt tensors + CSV index (generated)
+├── data_processed/                # Pre-generated CSV index files (see Section 6)
 ├── splits/                        # Train / val / test case ID lists
-├── examples/                      # 5 example patient DICOM pairs for quick testing
-├── architectures/                 # Architecture diagram PNGs
-├── graphs/                        # Model comparison graphs
-├── debug/                         # Sanity checks and debug scripts
+├── architecture_diagrams/         # Architecture diagram PNGs
 ├── src/
 │   ├── models/
 │   │   ├── resnet18_single_view.py      # Single-view ResNet18
@@ -274,6 +271,8 @@ mkdir results
 ---
 
 ## 6. Dataset Preparation
+
+> **Note:** The `data_processed/` folder included in this submission already contains the pre-generated CSV index files. If you have the dataset in place you can skip directly to [Section 7](#7-data-preprocessing). These steps are documented here for completeness and for anyone who wishes to regenerate them from scratch.
 
 ### Step 1 — Build case-level labels
 
@@ -395,6 +394,8 @@ Reports AUC, accuracy, recall, and soft/hard Dice scores for both CC and MLO vie
 | MV Baseline (`mv_baseline.pt`) | 0.8321 | 0.7735 | 0.8434 | 0.7143 |
 | MV Best (`mv_best.pt`) | 0.8276 | 0.7680 | 0.7470 | 0.7857 |
 
+> **Note on naming:** `sv_best.pt` has a lower AUC than `sv_baseline.pt` (0.7569 vs 0.7867). The "best" label refers to the model selected during an extended training run with GradCAM localisation loss and stronger regularisation — it trades a small amount of AUC for improved specificity (0.6565 vs 0.6348) and more focused attention maps. `sv_baseline.pt` is the better classifier by AUC alone.
+
 `mv_best.pt` localisation (seg head, malignant subset):
 
 | Metric | Value |
@@ -407,13 +408,7 @@ Reports AUC, accuracy, recall, and soft/hard Dice scores for both CC and MLO vie
 
 ## 10. Backend Setup
 
-The FastAPI backend handles model loading, DICOM parsing, inference, and overlay generation.
-
-### Install additional backend dependency
-
-```bash
-pip install fastapi uvicorn python-multipart
-```
+The FastAPI backend handles model loading, DICOM parsing, inference, and overlay generation. All required dependencies (`fastapi`, `uvicorn`, `python-multipart`) are included in `requirements.txt` and will be installed by `pip install -r requirements.txt`.
 
 ### Run the server
 
