@@ -35,13 +35,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PYTHON_VERSION=%%v
-echo [OK] Found %PYTHON_VERSION%
+echo [OK] Found Python
 
 :: ------------------------------------------------
 :: 2. Check Node.js / npm is installed
 :: ------------------------------------------------
-npm --version >nul 2>&1
+call npm --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Node.js was not found on your system.
     echo.
@@ -52,8 +51,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for /f "tokens=*" %%v in ('npm --version 2^>^&1') do set NPM_VERSION=%%v
-echo [OK] Found npm v%NPM_VERSION%
+echo [OK] Found npm
 
 :: ------------------------------------------------
 :: 3. Create virtual environment if it doesn't exist
@@ -102,7 +100,7 @@ echo [OK] Python dependencies ready.
 echo.
 echo [SETUP] Installing frontend dependencies...
 cd src\frontend
-npm install --silent
+call npm install --silent
 if errorlevel 1 (
     echo [ERROR] Failed to install frontend dependencies.
     cd ..\..
@@ -128,7 +126,7 @@ timeout /t 3 /nobreak >nul
 :: 9. Start the Vite frontend in a new window
 :: ------------------------------------------------
 echo [START] Starting frontend on http://localhost:5173 ...
-start "Mammogram XAI - Frontend" cmd /k "cd /d "%~dp0\src\frontend" && npm run dev"
+start "Mammogram XAI - Frontend" cmd /k "cd /d "%~dp0\src\frontend" && call npm run dev"
 
 :: ------------------------------------------------
 :: 10. Wait for frontend to be ready then open browser

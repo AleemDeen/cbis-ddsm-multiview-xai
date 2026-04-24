@@ -68,6 +68,29 @@ Once running, the application is available at:
 | Backend API | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
 
+> **Tip:** If the site shows a "Could not connect to backend" message, the frontend has loaded before the API server was fully ready. Simply refresh the page and it will connect.
+
+### Generating example DICOMs
+
+Before using the frontend, run the following to export a random set of example patient DICOMs into the `examples/` folder:
+
+```bash
+python export_examples.py
+```
+
+The script will ask how many cases you want, then randomly select a balanced mix of malignant and benign patients from the dataset and copy their CC and MLO DICOMs into `examples/` with clear filenames:
+
+```
+examples/
+├── P_00001_LEFT_MALIGNANT_CC.dcm    ← drag into the CC upload box
+├── P_00001_LEFT_MALIGNANT_MLO.dcm   ← drag into the MLO upload box
+├── P_00438_LEFT_BENIGN_CC.dcm
+├── P_00438_LEFT_BENIGN_MLO.dcm
+└── ...
+```
+
+For single-view models, upload the CC file only. For multi-view models (`mv_*`), upload both the CC and MLO files.
+
 ---
 
 ## Table of Contents
@@ -202,6 +225,7 @@ cbis-ddsm-multiview-xai-main/
 │       └── vite.config.js
 ├── generate_graphs.py             # Reproduce model comparison graphs
 ├── generate_architectures.py      # Reproduce architecture diagrams
+├── export_examples.py             # Export random DICOM pairs into examples/ for frontend testing
 ├── export_example_masks.py        # Export ground-truth ROI overlays for examples/
 ├── requirements.txt
 └── README.md
@@ -489,16 +513,31 @@ cd src/frontend && npm install && npm run dev
 
 ### Quick demo (no training required)
 
-If you have the pre-trained model weights, place them in `models/` and skip steps 4–9. Use the example DICOMs in `examples/` to test the interface immediately.
+If you have the pre-trained model weights, place them in `models/` and skip steps 4–9. Then generate a set of example DICOMs and start the interface:
+
+```bash
+# Export example DICOMs (requires the dataset to be in place)
+python export_examples.py
+
+# Start backend (terminal 1)
+uvicorn src.api.server:app --reload --host 0.0.0.0 --port 8000
+
+# Start frontend (terminal 2)
+cd src/frontend && npm run dev
+```
+
+`export_examples.py` will ask how many cases you want and randomly selects a balanced mix of malignant and benign patients. The exported files land in `examples/` with clear filenames:
 
 ```
 examples/
-├── P_00001_LEFT_malignant_CC.dcm   ← upload as CC view
-├── P_00001_LEFT_malignant_MLO.dcm  ← upload as MLO view
-├── P_00004_LEFT_benign_CC.dcm
-├── P_00004_LEFT_benign_MLO.dcm
+├── P_00001_LEFT_MALIGNANT_CC.dcm    ← drag into the CC upload box
+├── P_00001_LEFT_MALIGNANT_MLO.dcm   ← drag into the MLO upload box
+├── P_00438_LEFT_BENIGN_CC.dcm
+├── P_00438_LEFT_BENIGN_MLO.dcm
 └── ...
 ```
+
+For single-view models (`sv_*`), upload the CC file only. For multi-view models (`mv_*`), upload both CC and MLO.
 
 ---
 

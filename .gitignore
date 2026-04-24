@@ -46,3 +46,7 @@ graphs/*.png
 dataset.zip
 CHANGELOG.md
 
+# Example DICOMs and overlays (generated locally by export_examples.py)
+examples/*.dcm
+examples/*.png
+

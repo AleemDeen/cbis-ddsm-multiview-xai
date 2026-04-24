@@ -14,7 +14,7 @@ export default function App() {
   const [results, setResults]         = useState(null)
   const [error, setError]             = useState(null)
 
-  const isMultiView = selectedModel.toLowerCase().includes('multi')
+  const isMultiView = selectedModel.toLowerCase().startsWith('mv')
   const canSubmit   = selectedModel && ccFile && (!isMultiView || mloFile)
 
   useEffect(() => {

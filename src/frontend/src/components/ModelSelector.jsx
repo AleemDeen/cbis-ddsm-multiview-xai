@@ -3,9 +3,10 @@ import './ModelSelector.css'
 export default function ModelSelector({ models, selected, onChange }) {
   const getModelType = (name) => {
     const n = name.toLowerCase()
-    if (n.includes('seg'))    return { label: 'Seg',   color: '#a78bfa' }
-    if (n.includes('multi'))  return { label: 'Multi', color: '#34d399' }
-    return                           { label: 'Single',color: '#60a5fa' }
+    const isMv = n.startsWith('mv')
+    if (isMv && n.includes('best'))     return { label: 'MV + Seg', color: '#a78bfa' }
+    if (isMv)                           return { label: 'Multi',    color: '#34d399' }
+    return                                     { label: 'Single',   color: '#60a5fa' }
   }
 
   return (
