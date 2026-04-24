@@ -42,3 +42,7 @@ graphs/*.png
 *.pt
 *.pth
 
+# Local dataset archive and project changelog
+dataset.zip
+CHANGELOG.md
+

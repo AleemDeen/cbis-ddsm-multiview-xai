@@ -6,6 +6,70 @@ Explainable AI system for mammogram malignancy classification using the CBIS-DDS
 
 ---
 
+## Quick Start
+
+The quickest way to run the application is using the platform-specific launch script. It will automatically set up the Python virtual environment, install all dependencies, and start both the backend and frontend in one step.
+
+**Prerequisites:** [Python 3.10+](https://www.python.org/downloads/) and [Node.js (LTS)](https://nodejs.org/) must be installed before running the script.
+
+---
+
+### Windows
+
+Double-click `start.bat` in the project root, or run it from a terminal:
+
+```cmd
+start.bat
+```
+
+This opens two separate terminal windows — one for the backend, one for the frontend — and launches the application in your browser automatically. Close those windows to shut down the servers.
+
+---
+
+### macOS
+
+The script needs execute permission the first time. Open a terminal in the project root and run:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+From the second run onwards, just:
+
+```bash
+./start.sh
+```
+
+Both servers run in the background within the same terminal. Press **Ctrl+C** to shut them both down cleanly.
+
+---
+
+### Linux
+
+Same as macOS — grant execute permission once, then run:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+If Python or Node are not installed, the script will print the relevant install commands for your package manager (apt for Ubuntu/Debian, dnf for Fedora).
+
+Press **Ctrl+C** to shut down both servers.
+
+---
+
+Once running, the application is available at:
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
+
+---
+
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
