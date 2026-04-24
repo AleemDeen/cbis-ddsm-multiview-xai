@@ -324,7 +324,15 @@ Each row adds `cc_pt_path`, `mlo_pt_path`, `cc_mask_pt_path`, `mlo_mask_pt_path`
 
 ## 8. Model Training
 
-All models are saved to the `models/` directory.
+All models are saved to the `models/` directory. Each training run generates a **timestamped filename** so new checkpoints never overwrite existing ones — including the pre-trained weights provided with the project.
+
+| Script | Output filename |
+|---|---|
+| `train_single_view.py` | `models/sv_YYYYMMDD_HHMMSS.pt` |
+| `train_multi_view.py` | `models/mv_baseline_YYYYMMDD_HHMMSS.pt` |
+| `finetune_multi_view_seg_v4.py` | `models/mv_best_YYYYMMDD_HHMMSS.pt` |
+
+Once trained, the new checkpoint will appear automatically in the model selector dropdown in the frontend and in the interactive menu when running evaluation scripts.
 
 ### Single-view classifier
 
@@ -332,33 +340,27 @@ All models are saved to the `models/` directory.
 python -m src.train.train_single_view
 ```
 
-Saves: `models/sv_best.pt`
-
 ### Multi-view classifier (MV Baseline)
 
 ```bash
 python -m src.train.train_multi_view
 ```
 
-Saves: `models/mv_baseline.pt`
-
 ### U-Net segmentation head fine-tuning (MV Best)
 
-Train the MV Baseline first, then fine-tune the U-Net decoders:
+Train the MV Baseline first, then pass its timestamped checkpoint to the fine-tuning script:
 
 ```bash
-python -m src.train.finetune_multi_view_seg_v4 --base-model models/mv_baseline.pt --epochs 40
+python -m src.train.finetune_multi_view_seg_v4 --base-model models/mv_baseline_YYYYMMDD_HHMMSS.pt --epochs 40
 ```
 
 **What this does:**
-- Loads the pre-trained classification backbone (`mv_baseline.pt`)
+- Loads the pre-trained classification backbone
 - Freezes `conv1`, `layer1`, `layer2`, and the classifier head
 - Unfreezes `layer3` and `layer4` so features become spatially discriminative
 - Trains two U-Net decoders (one per view) with skip connections from all four ResNet stages
 - Combined loss: classification BCE + weighted segmentation BCE + Dice
 - Backbone LR: `1e-5` | Decoder LR: `1e-3` | Batch size: `8`
-
-Saves: `models/mv_best.pt`
 
 ---
 

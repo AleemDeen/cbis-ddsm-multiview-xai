@@ -10,6 +10,7 @@ import pandas as pd
 from pathlib import Path
 import time
 import warnings
+from datetime import datetime
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.models._utils")
 
@@ -215,7 +216,9 @@ def main():
     )
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
 
-    save_path = "models/mv_baseline.pt"
+    # Timestamped filename so new runs never overwrite existing checkpoints
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = f"models/mv_baseline_{timestamp}.pt"
 
     num_epochs        = 40
     patience          = 10

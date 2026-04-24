@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import time
 import warnings
+from datetime import datetime
 
 from src.models.resnet18_single_view import ResNet18SingleView
 from src.data.dataloaders import build_dataloaders
@@ -186,9 +187,14 @@ def main():
     best_val_loss     = float("inf")
     epochs_no_improve = 0
 
+    # Timestamped filename so new runs never overwrite existing checkpoints
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = f"models/sv_{timestamp}.pt"
+
     start_time = time.time()
 
     print(f"\nStarting Training (Patience: {patience} epochs)")
+    print(f"Checkpoint will be saved to: {save_path}")
     print("-" * 30)
 
     for epoch in range(num_epochs):
@@ -212,9 +218,8 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss     = val_loss
             epochs_no_improve = 0
-            save_path         = "models/sv_best.pt"
             torch.save(model.state_dict(), save_path)
-            print("Saved new best model")
+            print(f"Saved new best model -> {save_path}")
         else:
             epochs_no_improve += 1
             print(f"No improvement for {epochs_no_improve} epoch(s).")

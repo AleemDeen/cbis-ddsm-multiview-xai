@@ -40,6 +40,7 @@ Usage:
 import argparse
 import time
 import warnings
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -263,7 +264,8 @@ def main():
     parser.add_argument("--lambda-sparse", type=float, default=0.01)
     parser.add_argument("--max-coverage",  type=float, default=0.15,
                         help="Max mask pixel coverage to be considered a valid ROI (default 15%%)")
-    parser.add_argument("--save-path",     type=str,   default="models/mv_best.pt")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    parser.add_argument("--save-path",     type=str,   default=f"models/mv_best_{timestamp}.pt")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
