@@ -2,6 +2,10 @@
 setlocal enabledelayedexpansion
 title Mammogram XAI - Launcher
 
+:: Always run from the folder this script lives in,
+:: regardless of where it was launched from
+cd /d "%~dp0"
+
 echo.
 echo ================================================
 echo   Mammogram XAI - Starting up...
@@ -104,7 +108,7 @@ echo [OK] Frontend dependencies ready.
 :: ------------------------------------------------
 echo.
 echo [START] Starting FastAPI backend on http://localhost:8000 ...
-start "Mammogram XAI - Backend" cmd /k "call .venv\Scripts\activate.bat && uvicorn src.api.server:app --port 8000"
+start "Mammogram XAI - Backend" cmd /k "cd /d "%~dp0" && call .venv\Scripts\activate.bat && uvicorn src.api.server:app --port 8000"
 
 :: ------------------------------------------------
 :: 8. Give the backend a moment to bind its port
@@ -115,7 +119,7 @@ timeout /t 3 /nobreak >nul
 :: 9. Start the Vite frontend in a new window
 :: ------------------------------------------------
 echo [START] Starting frontend on http://localhost:5173 ...
-start "Mammogram XAI - Frontend" cmd /k "cd src\frontend && npm run dev"
+start "Mammogram XAI - Frontend" cmd /k "cd /d "%~dp0\src\frontend" && npm run dev"
 
 :: ------------------------------------------------
 :: 10. Wait for frontend to be ready then open browser
