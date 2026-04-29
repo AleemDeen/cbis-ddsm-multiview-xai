@@ -7,6 +7,8 @@ Handles three model types:
   - ResNet18MultiViewSeg  (CC + MLO DICOMs → U-Net segmentation masks per view)
 """
 
+from __future__ import annotations  # allow X | Y union syntax on Python 3.9
+
 import io
 import base64
 import numpy as np
