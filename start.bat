@@ -22,34 +22,36 @@ echo ================================================
 echo.
 
 :: ------------------------------------------------
-:: 1. Check Python 3.10+ is installed
+:: 1. Find Python 3.10+ (prefer highest available version)
 :: ------------------------------------------------
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python was not found on your system.
+set PYTHON_CMD=
+
+:: Try the Windows Python Launcher with explicit versions (highest first)
+for %%v in (3.13 3.12 3.11 3.10) do (
+    if not defined PYTHON_CMD (
+        py -%%v --version >nul 2>&1
+        if not errorlevel 1 set "PYTHON_CMD=py -%%v"
+    )
+)
+
+:: Fallback: check if the default 'python' is already 3.10+
+if not defined PYTHON_CMD (
+    python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+    if not errorlevel 1 set "PYTHON_CMD=python"
+)
+
+if not defined PYTHON_CMD (
+    echo [ERROR] Python 3.10 or later is required but was not found.
     echo.
-    echo Please install Python 3.10 or later from https://www.python.org/downloads/
+    echo Please install Python 3.10+ from https://www.python.org/downloads/
     echo Make sure to tick "Add Python to PATH" during installation.
     echo.
     pause
     exit /b 1
 )
 
-python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
-if errorlevel 1 (
-    for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PY_VER=%%v
-    echo [ERROR] Python 3.10 or later is required.
-    echo         Found: !PY_VER!
-    echo.
-    echo Please install Python 3.10+ from https://www.python.org/downloads/
-    echo Ensure the new version appears first on PATH, then re-run this script.
-    echo.
-    pause
-    exit /b 1
-)
-
-for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PY_VER=%%v
-echo [OK] Found !PY_VER!
+for /f "tokens=*" %%v in ('!PYTHON_CMD! --version 2^>^&1') do set PY_VER=%%v
+echo [OK] Found !PY_VER! ^(!PYTHON_CMD!^)
 
 :: ------------------------------------------------
 :: 2. Check Node.js / npm is installed; auto-install if missing
@@ -85,8 +87,8 @@ echo [OK] Found npm
 :: ------------------------------------------------
 if not exist ".venv" (
     echo.
-    echo [SETUP] Creating Python virtual environment...
-    python -m venv .venv
+    echo [SETUP] Creating Python virtual environment with !PY_VER!...
+    !PYTHON_CMD! -m venv .venv
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment.
         pause
@@ -96,9 +98,9 @@ if not exist ".venv" (
 ) else (
     .venv\Scripts\python.exe -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
     if errorlevel 1 (
-        echo [WARN] Existing .venv was built with an older Python. Recreating...
+        echo [WARN] Existing .venv was built with an older Python. Recreating with !PY_VER!...
         rmdir /s /q .venv
-        python -m venv .venv
+        !PYTHON_CMD! -m venv .venv
         if errorlevel 1 (
             echo [ERROR] Failed to recreate virtual environment.
             pause

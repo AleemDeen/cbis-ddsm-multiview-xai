@@ -7,32 +7,37 @@ echo "================================================"
 echo ""
 
 # ------------------------------------------------
-# 1. Check Python 3.10+ is installed
+# 1. Find Python 3.10+ (prefer highest available version)
 # ------------------------------------------------
-if ! command -v python3 &>/dev/null; then
-    echo "[ERROR] Python was not found on your system."
+PYTHON_CMD=""
+
+for v in python3.13 python3.12 python3.11 python3.10; do
+    if command -v "$v" &>/dev/null; then
+        PYTHON_CMD="$v"
+        break
+    fi
+done
+
+# Fallback: use python3 if it's already 3.10+
+if [ -z "$PYTHON_CMD" ]; then
+    if command -v python3 &>/dev/null && \
+       python3 -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
+        PYTHON_CMD="python3"
+    fi
+fi
+
+if [ -z "$PYTHON_CMD" ]; then
+    echo "[ERROR] Python 3.10 or later is required but was not found."
     echo ""
-    echo "macOS:  brew install python@3.11"
-    echo "Linux:  sudo apt install python3.11 python3.11-venv  (Ubuntu/Debian)"
-    echo "        sudo dnf install python3.11                   (Fedora)"
+    echo "macOS:  brew install python@3.12"
+    echo "Linux:  sudo apt install python3.12 python3.12-venv  (Ubuntu/Debian)"
+    echo "        sudo dnf install python3.12                   (Fedora)"
     echo ""
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 --version 2>&1)
-
-if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
-    echo "[ERROR] Python 3.10 or later is required."
-    echo "        Found: $PYTHON_VERSION"
-    echo ""
-    echo "macOS:  brew install python@3.11"
-    echo "Linux:  sudo apt install python3.11 python3.11-venv  (Ubuntu/Debian)"
-    echo "        sudo dnf install python3.11                   (Fedora)"
-    echo ""
-    exit 1
-fi
-
-echo "[OK] Found $PYTHON_VERSION"
+PYTHON_VERSION=$("$PYTHON_CMD" --version 2>&1)
+echo "[OK] Found $PYTHON_VERSION ($PYTHON_CMD)"
 
 # ------------------------------------------------
 # 2. Check Node.js / npm is installed; auto-install if missing
@@ -94,19 +99,19 @@ echo "[OK] Found npm v$NPM_VERSION"
 # ------------------------------------------------
 if [ ! -d ".venv" ]; then
     echo ""
-    echo "[SETUP] Creating Python virtual environment..."
-    python3 -m venv .venv
+    echo "[SETUP] Creating Python virtual environment with $PYTHON_VERSION..."
+    "$PYTHON_CMD" -m venv .venv
     if [ $? -ne 0 ]; then
         echo "[ERROR] Failed to create virtual environment."
-        echo "        Try: sudo apt install python3.11-venv"
+        echo "        Try: sudo apt install python3.12-venv"
         exit 1
     fi
     echo "[OK] Virtual environment created."
 else
     if ! .venv/bin/python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
-        echo "[WARN] Existing .venv was built with an older Python. Recreating..."
+        echo "[WARN] Existing .venv was built with an older Python. Recreating with $PYTHON_VERSION..."
         rm -rf .venv
-        python3 -m venv .venv
+        "$PYTHON_CMD" -m venv .venv
         if [ $? -ne 0 ]; then
             echo "[ERROR] Failed to recreate virtual environment."
             exit 1
