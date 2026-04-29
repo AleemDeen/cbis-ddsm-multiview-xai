@@ -7,19 +7,31 @@ echo "================================================"
 echo ""
 
 # ------------------------------------------------
-# 1. Check Python is installed
+# 1. Check Python 3.10+ is installed
 # ------------------------------------------------
 if ! command -v python3 &>/dev/null; then
     echo "[ERROR] Python was not found on your system."
     echo ""
-    echo "macOS:  brew install python  (or download from https://www.python.org/downloads/)"
-    echo "Linux:  sudo apt install python3 python3-venv  (Ubuntu/Debian)"
-    echo "        sudo dnf install python3               (Fedora)"
+    echo "macOS:  brew install python@3.11"
+    echo "Linux:  sudo apt install python3.11 python3.11-venv  (Ubuntu/Debian)"
+    echo "        sudo dnf install python3.11                   (Fedora)"
     echo ""
     exit 1
 fi
 
 PYTHON_VERSION=$(python3 --version 2>&1)
+
+if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
+    echo "[ERROR] Python 3.10 or later is required."
+    echo "        Found: $PYTHON_VERSION"
+    echo ""
+    echo "macOS:  brew install python@3.11"
+    echo "Linux:  sudo apt install python3.11 python3.11-venv  (Ubuntu/Debian)"
+    echo "        sudo dnf install python3.11                   (Fedora)"
+    echo ""
+    exit 1
+fi
+
 echo "[OK] Found $PYTHON_VERSION"
 
 # ------------------------------------------------
@@ -78,6 +90,7 @@ echo "[OK] Found npm v$NPM_VERSION"
 
 # ------------------------------------------------
 # 3. Create virtual environment if it doesn't exist
+#    (recreate automatically if built with wrong Python)
 # ------------------------------------------------
 if [ ! -d ".venv" ]; then
     echo ""
@@ -85,12 +98,23 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
     if [ $? -ne 0 ]; then
         echo "[ERROR] Failed to create virtual environment."
-        echo "        Try: sudo apt install python3-venv"
+        echo "        Try: sudo apt install python3.11-venv"
         exit 1
     fi
     echo "[OK] Virtual environment created."
 else
-    echo "[OK] Virtual environment already exists."
+    if ! .venv/bin/python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
+        echo "[WARN] Existing .venv was built with an older Python. Recreating..."
+        rm -rf .venv
+        python3 -m venv .venv
+        if [ $? -ne 0 ]; then
+            echo "[ERROR] Failed to recreate virtual environment."
+            exit 1
+        fi
+        echo "[OK] Virtual environment recreated with $PYTHON_VERSION."
+    else
+        echo "[OK] Virtual environment already exists."
+    fi
 fi
 
 # ------------------------------------------------

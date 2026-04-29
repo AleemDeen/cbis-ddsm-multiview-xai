@@ -22,7 +22,7 @@ echo ================================================
 echo.
 
 :: ------------------------------------------------
-:: 1. Check Python is installed
+:: 1. Check Python 3.10+ is installed
 :: ------------------------------------------------
 python --version >nul 2>&1
 if errorlevel 1 (
@@ -35,7 +35,21 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [OK] Found Python
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+if errorlevel 1 (
+    for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PY_VER=%%v
+    echo [ERROR] Python 3.10 or later is required.
+    echo         Found: !PY_VER!
+    echo.
+    echo Please install Python 3.10+ from https://www.python.org/downloads/
+    echo Ensure the new version appears first on PATH, then re-run this script.
+    echo.
+    pause
+    exit /b 1
+)
+
+for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PY_VER=%%v
+echo [OK] Found !PY_VER!
 
 :: ------------------------------------------------
 :: 2. Check Node.js / npm is installed; auto-install if missing
@@ -67,6 +81,7 @@ echo [OK] Found npm
 
 :: ------------------------------------------------
 :: 3. Create virtual environment if it doesn't exist
+::    (recreate automatically if built with wrong Python)
 :: ------------------------------------------------
 if not exist ".venv" (
     echo.
@@ -79,7 +94,20 @@ if not exist ".venv" (
     )
     echo [OK] Virtual environment created.
 ) else (
-    echo [OK] Virtual environment already exists.
+    .venv\Scripts\python.exe -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+    if errorlevel 1 (
+        echo [WARN] Existing .venv was built with an older Python. Recreating...
+        rmdir /s /q .venv
+        python -m venv .venv
+        if errorlevel 1 (
+            echo [ERROR] Failed to recreate virtual environment.
+            pause
+            exit /b 1
+        )
+        echo [OK] Virtual environment recreated with !PY_VER!.
+    ) else (
+        echo [OK] Virtual environment already exists.
+    )
 )
 
 :: ------------------------------------------------
