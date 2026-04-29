@@ -23,16 +23,54 @@ PYTHON_VERSION=$(python3 --version 2>&1)
 echo "[OK] Found $PYTHON_VERSION"
 
 # ------------------------------------------------
-# 2. Check Node.js / npm is installed
+# 2. Check Node.js / npm is installed; auto-install if missing
 # ------------------------------------------------
 if ! command -v npm &>/dev/null; then
-    echo "[ERROR] Node.js was not found on your system."
+    echo "[WARN] Node.js not found. Attempting automatic installation..."
     echo ""
-    echo "macOS:  brew install node  (or download from https://nodejs.org/)"
-    echo "Linux:  sudo apt install nodejs npm  (Ubuntu/Debian)"
-    echo "        sudo dnf install nodejs      (Fedora)"
+    OS=$(uname -s)
+    INSTALLED=0
+
+    if [ "$OS" = "Darwin" ]; then
+        if command -v brew &>/dev/null; then
+            echo "[SETUP] Running: brew install node"
+            brew install node && INSTALLED=1
+        else
+            echo "[ERROR] Homebrew is not installed — it is required to auto-install Node.js on macOS."
+            echo "        Install Homebrew first, then re-run this script:"
+            echo "        /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            echo "        Or install Node.js directly from https://nodejs.org/ (LTS version)."
+            exit 1
+        fi
+    elif [ "$OS" = "Linux" ]; then
+        if command -v apt-get &>/dev/null; then
+            echo "[SETUP] Running: sudo apt-get install -y nodejs npm"
+            sudo apt-get install -y nodejs npm && INSTALLED=1
+        elif command -v dnf &>/dev/null; then
+            echo "[SETUP] Running: sudo dnf install -y nodejs"
+            sudo dnf install -y nodejs && INSTALLED=1
+        elif command -v yum &>/dev/null; then
+            echo "[SETUP] Running: sudo yum install -y nodejs npm"
+            sudo yum install -y nodejs npm && INSTALLED=1
+        else
+            echo "[ERROR] Could not detect a supported package manager (apt / dnf / yum)."
+            echo "        Install Node.js manually from https://nodejs.org/ (LTS version)."
+            exit 1
+        fi
+    else
+        echo "[ERROR] Unrecognised OS ($OS). Install Node.js from https://nodejs.org/ (LTS version)."
+        exit 1
+    fi
+
+    if [ "$INSTALLED" -eq 0 ] || ! command -v npm &>/dev/null; then
+        echo ""
+        echo "[ERROR] Installation failed or npm is still not on PATH."
+        echo "        Install Node.js manually from https://nodejs.org/ (LTS version)."
+        exit 1
+    fi
+
+    echo "[OK] Node.js installed successfully."
     echo ""
-    exit 1
 fi
 
 NPM_VERSION=$(npm --version 2>&1)

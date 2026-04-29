@@ -50,3 +50,12 @@ CHANGELOG.md
 examples/*.dcm
 examples/*.png
 
+# Local-only scripts and generated artefacts (not needed for reproduction)
+analyse_errors.py
+create_submission_zip.py
+generate_figures.py
+project_report_aid.html
+statistical_tests.py
+figures/
+cbis-ddsm-multiview-xai-main.zip
+

@@ -38,17 +38,29 @@ if errorlevel 1 (
 echo [OK] Found Python
 
 :: ------------------------------------------------
-:: 2. Check Node.js / npm is installed
+:: 2. Check Node.js / npm is installed; auto-install if missing
 :: ------------------------------------------------
 call npm --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Node.js was not found on your system.
+    echo [WARN] Node.js was not found. Attempting to install via winget...
     echo.
-    echo Please install Node.js from https://nodejs.org/
-    echo The LTS version is recommended.
+    winget install --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+    if errorlevel 1 (
+        echo.
+        echo [ERROR] Automatic installation failed.
+        echo Please install Node.js manually from https://nodejs.org/ ^(LTS version^)
+        echo then re-run this script.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo.
+    echo [OK] Node.js installed successfully.
+    echo      PATH changes take effect in a new terminal session.
+    echo      Please close this window and run start.bat again.
     echo.
     pause
-    exit /b 1
+    exit /b 0
 )
 
 echo [OK] Found npm
